@@ -214,6 +214,8 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: '10mb' }));
   app.use(express.static(PUBLIC_DIR));
+  // Serve the Monaco editor (minified AMD build) that the frontend loads from /monaco/vs/loader.js
+  app.use('/monaco', express.static(path.join(ROOT, 'node_modules', 'monaco-editor', 'min')));
 
   // landing page at root that redirects to the IDE
   app.get('/codeharbor-landing', (req, res) => {

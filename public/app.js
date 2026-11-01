@@ -234,7 +234,15 @@ function showMenu(name, button) {
   menu.querySelectorAll('button').forEach((item, index) => item.addEventListener('click', () => { menu.classList.add('hidden'); actions[name][index][1](); }));
 }
 function initMonaco() {
-  window.MonacoEnvironment = { getWorkerUrl: () => '/monaco/vs/base/worker/workerMain.js' };
+  window.MonacoEnvironment = {
+    getWorkerUrl: function (_moduleId, label) {
+      if (label === 'json') return '/monaco/vs/language/json/json.worker.js';
+      if (label === 'css' || label === 'scss' || label === 'less') return '/monaco/vs/language/css/css.worker.js';
+      if (label === 'html' || label === 'handlebars' || label === 'razor') return '/monaco/vs/language/html/html.worker.js';
+      if (label === 'typescript' || label === 'javascript') return '/monaco/vs/language/typescript/ts.worker.js';
+      return '/monaco/vs/editor/editor.worker.js';
+    },
+  };
   window.require.config({ paths: { vs: '/monaco/vs' } });
   window.require(['vs/editor/editor.main'], (monaco) => {
     state.monaco = monaco;
