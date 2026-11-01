@@ -4,7 +4,7 @@ A complete browser-based coding environment with a real editor, terminal, previe
 
 [Live Website](https://codeharbor-theta.vercel.app/) · [GitHub Repository](https://github.com/rengoku210/CodeHarbor)
 
-CodeHarbor is a browser IDE built to feel like a desktop development tool. You can open a project, write HTML/CSS/JavaScript with real coding assistance, run it, preview it, fix problems with AI, and manage your changes with Git — all from one tab, without installing an IDE.
+CodeHarbor is a browser IDE built to feel like a desktop development tool. You can open a project, write HTML/CSS/JavaScript with real coding assistance, run it, preview it, fix problems with AI, and manage your changes with Git all from one tab, without installing an IDE.
 
 # Goals
 1. Let developers open a workspace and start writing code immediately.
@@ -24,7 +24,7 @@ CodeHarbor is a browser IDE built to feel like a desktop development tool. You c
 
 5. Go & Selection menus: Go to line/file/symbol/definition, next/previous problem, expand selection, add cursors above/below.
 
-6. Run: A green Run button detects what you're working on — HTML opens a live Preview panel, CSS finds its HTML entry, JS runs via Node or `npm run dev/start/serve`.
+6. Run: A green Run button detects what you're working on HTML opens a live Preview panel, CSS finds its HTML entry, JS runs via Node or `npm run dev/start/serve`.
 
 7. Preview: Refresh, open in a new tab, close, and auto-reload when you save the file you're previewing.
 
@@ -32,7 +32,7 @@ CodeHarbor is a browser IDE built to feel like a desktop development tool. You c
 
 9. AI Assistant: Ask questions, fix the active file, or explain the last error. The AI reads your open file, patches it, saves it, and the editor updates instantly.
 
-10. Source Control: Initialize a repo, see modified files, stage/unstage, view diffs, and commit — all from the sidebar.
+10. Source Control: Initialize a repo, see modified files, stage/unstage, view diffs, and commit all from the sidebar.
 
 11. Extensions: Open the built-in code-server IDE (`/ide`) for the full VS Code-compatible experience with Open VSX marketplace extensions.
 
@@ -52,7 +52,7 @@ Website: https://codeharbor-theta.vercel.app/
 
 3. Run `Install-CodeHarbor.ps1` once to install Node.js dependencies.
 
-4. Run `Start-CodeHarbor.ps1` — it starts the server and opens http://127.0.0.1:4170/ in your browser.
+4. Run `Start-CodeHarbor.ps1` it starts the server and opens http://127.0.0.1:4170/ in your browser.
 
 5. Run `Stop-CodeHarbor.ps1` when you want to stop it.
 
@@ -62,7 +62,7 @@ Files live in the `workspace/` folder and persist on disk between sessions.
 CodeHarbor is two processes working together. A Node.js server (port 4170) serves the custom Monaco editor interface, the file and Git APIs, the AI agent, and the WebSocket terminal. A bundled code-server runtime (port 4171) powers the full VS Code-compatible IDE at `/ide` with real extension support. The AI assistant uses the Inception API (Mercury-3) and only touches files inside the workspace.
 
 # AI Assistance
-I used AI while developing CodeHarbor — for the assistant itself, debugging tricky behaviors, and testing features end to end. The built-in AI assistant lets you hand some of that power to users of the product.
+I used AI while developing CodeHarbor for the assistant itself, debugging tricky behaviors, and testing features end to end. The built-in AI assistant lets you hand some of that power to users of the product.
 
 # Credits and Acknowledgements
 Created by: Rengoku (@rengoku210) for Hack Club.
