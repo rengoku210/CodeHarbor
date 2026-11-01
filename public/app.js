@@ -1,7 +1,7 @@
 const state = {
   files: [], expanded: new Set(['']), directoryCache: new Map(), tabs: new Map(),
   activePath: null, selectedPath: '', createKind: 'file', activeView: 'explorer',
-  activePanel: 'terminal', monaco: null, editor: null, models: new Map(),
+  activePanel: 'terminal', monaco: null, editor: null, models: new Map(), chatHistory: [], debugLines: [], termWs: null, termConnected: false,
 };
 const $ = (id) => document.getElementById(id);
 const sideContent = $('side-content');
@@ -194,10 +194,101 @@ function showSearchPane() {
   });
   input.focus();
 }
+function debugAppend(text) {
+  state.debugLines.push(text);
+  if (state.activePanel === 'debug') {
+    const el = $('panel-empty');
+    el.classList.remove('hidden');
+    el.textContent = state.debugLines.join('\n');
+    el.scrollTop = el.scrollHeight;
+  }
+}
+function runActiveJsFile() {
+  if (!state.activePath) { notify('Open a JavaScript file first.'); return; }
+  if (!state.activePath.endsWith('.js')) { notify('Active file is not JavaScript.'); return; }
+  toggleTerminal(true);
+  sendTerminalCommand(`node "${state.activePath}"`);
+  debugAppend(`> node "${state.activePath}"`);
+}
+function explainLastError() {
+  const out = $('terminal-output');
+  const text = (out ? out.innerText : '').slice(-1500);
+  if (!text.trim()) { notify('No terminal output to analyze.'); return; }
+  setView('ai');
+  askAiExplain(text);
+}
+async function askAiExplain(errorText) {
+  addChatMessage('user', 'Explain this error:\n' + errorText.slice(0, 1200));
+  try {
+    const result = await api('/api/ai/explain-error', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: errorText }),
+    });
+    addChatMessage('assistant', result.content);
+  } catch (error) { addChatMessage('system', error.message); }
+}
+function showRunPane() {
+  sideContent.replaceChildren();
+  const wrap = document.createElement('div');
+  wrap.className = 'run-pane';
+  const hint = document.createElement('div');
+  hint.className = 'empty-tree';
+  hint.textContent = 'Commands run in the integrated terminal. Output is mirrored to the DEBUG CONSOLE panel below.';
+  const b1 = document.createElement('button'); b1.className = 'run-btn primary'; b1.textContent = 'Run Active JS File';
+  b1.addEventListener('click', runActiveJsFile);
+  const b2 = document.createElement('button'); b2.className = 'run-btn'; b2.textContent = 'Run PowerShell Command…';
+  b2.addEventListener('click', () => { toggleTerminal(true); $('terminal-command').focus(); });
+  const b3 = document.createElement('button'); b3.className = 'run-btn'; b3.textContent = 'Explain Last Error';
+  b3.addEventListener('click', explainLastError);
+  wrap.append(hint, b1, b2, b3);
+  sideContent.append(wrap);
+}
+function addChatMessage(role, text) {
+  const list = $('ai-messages');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'ai-message ' + role;
+  div.textContent = text;
+  list.append(div);
+  list.scrollTop = list.scrollHeight;
+}
+async function chatSend(text) {
+  addChatMessage('user', text);
+  const history = (state.chatHistory || []).slice(-20);
+  history.push({ role: 'user', content: text });
+  state.chatHistory = history;
+  try {
+    const result = await api('/api/ai/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history }),
+    });
+    state.chatHistory.push({ role: 'assistant', content: result.content });
+    addChatMessage('assistant', result.content);
+  } catch (error) { addChatMessage('system', error.message); }
+}
+function showAiPane() {
+  sideContent.replaceChildren();
+  const wrap = document.createElement('div');
+  wrap.className = 'ai-pane';
+  const status = document.createElement('div');
+  status.className = 'ai-status';
+  api('/api/ai/status').then((s) => { status.textContent = s.configured ? `AI ready · ${s.model}` : 'AI not configured'; })
+    .catch(() => { status.textContent = 'AI status unavailable'; });
+  const list = document.createElement('div'); list.className = 'ai-messages'; list.id = 'ai-messages';
+  const row = document.createElement('div'); row.className = 'ai-input-row';
+  const input = document.createElement('input'); input.id = 'ai-input'; input.placeholder = 'Ask about your code…'; input.autocomplete = 'off';
+  const sendBtn = document.createElement('button'); sendBtn.className = 'primary'; sendBtn.textContent = 'Send';
+  const explainBtn = document.createElement('button'); explainBtn.className = 'run-btn'; explainBtn.textContent = 'Explain last error';
+  const doSend = () => { const v = input.value.trim(); if (!v) return; input.value = ''; chatSend(v); };
+  sendBtn.addEventListener('click', doSend);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
+  explainBtn.addEventListener('click', explainLastError);
+  row.append(input, sendBtn);
+  wrap.append(status, list, row, explainBtn);
+  sideContent.append(wrap);
+}
 async function setView(view) {
   state.activeView = view;
   document.querySelectorAll('.activity').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
-  $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', run: 'Run and Debug', extensions: 'Extensions', settings: 'Settings' })[view] || 'Explorer';
+  $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', run: 'Run and Debug', extensions: 'Extensions', ai: 'AI Assistant', settings: 'Settings' })[view] || 'Explorer';
   $('explorer-actions').classList.toggle('hidden', view !== 'explorer');
   if (view === 'search') showSearchPane();
   else if (view === 'explorer') renderTree();
@@ -210,7 +301,13 @@ async function setView(view) {
         if (!git.repository) message.textContent = 'No Git repository found in this workspace.';
         else message.textContent = `${git.branch || 'Detached HEAD'} · ${git.changes} changed file${git.changes === 1 ? '' : 's'}`;
       } catch (error) { message.textContent = error.message; }
-    } else message.textContent = ({ run: 'Choose a file and use the Run menu to execute a command.', extensions: 'This local editor uses Monaco. Extension installation is not configured.', settings: 'Editor settings are stored in the browser for this prototype.' })[view] || '';
+    } else if (view === 'run') { showRunPane(); }
+    else if (view === 'ai') { showAiPane(); }
+    else if (view === 'extensions') {
+      message.innerHTML = 'Full extension marketplace is available in the built-in IDE.<br><button class="run-btn primary" id="open-full-ide">Open Full IDE (code-server)</button>';
+      const btn = message.querySelector('#open-full-ide');
+      if (btn) btn.addEventListener('click', () => { window.open('/ide/', '_blank'); });
+    } else message.textContent = ({ settings: 'Editor settings are stored in the browser for this prototype.' })[view] || '';
     sideContent.append(message);
   }
 }
@@ -271,7 +368,7 @@ function showMenu(name, button) {
     Edit: [['Undo', () => state.editor.trigger('menu', 'undo')], ['Redo', () => state.editor.trigger('menu', 'redo')], ['Find', () => state.editor.trigger('menu', 'actions.find')]],
     Selection: [['Select All', () => state.editor.trigger('menu', 'editor.action.selectAll')]],
     View: [['Explorer', () => setView('explorer')], ['Search', () => setView('search')], ['Toggle Terminal', toggleTerminal]],
-    Go: [['Quick Open…', openQuickOpen]], Run: [['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
+    Go: [['Quick Open…', openQuickOpen]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Terminal: [['New Terminal', () => toggleTerminal(true)], ['Run Command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Help: [['About CodeHarbor', () => notify('CodeHarbor local editor')]],
   };
