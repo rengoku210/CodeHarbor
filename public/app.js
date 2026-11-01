@@ -147,7 +147,7 @@ function closeTab(filePath) {
 }
 async function saveActive() {
   if (!state.activePath) return;
-  const tab = state.tabs.get(state.activePath); if (!tab) return;
+  const tab = state.tabs.get(state.activePath); if (!tab || tab.readOnly) return;
   try { await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: state.activePath, content: tab.model.getValue() }) }); tab.dirty = false; renderTabs(); showStatus('Saved'); }
   catch (error) { notify(error.message); }
 }
@@ -285,6 +285,84 @@ function showAiPane() {
   wrap.append(status, list, row, explainBtn);
   sideContent.append(wrap);
 }
+async function showSourcePane() {
+  sideContent.replaceChildren();
+  let git;
+  try { git = await api('/api/git'); } catch (e) { notify(e.message); return; }
+  if (!git.repository) {
+    const box = document.createElement('div'); box.className = 'empty-tree';
+    box.innerHTML = 'No Git repository in this workspace.<br><button class="run-btn primary" id="git-init">Initialize Git Repository</button>';
+    box.querySelector('#git-init').addEventListener('click', async () => {
+      try { await api('/api/git/init', { method: 'POST' }); await showSourcePane(); } catch (e) { notify(e.message); }
+    });
+    sideContent.append(box);
+    return;
+  }
+  const wrap = document.createElement('div'); wrap.className = 'source-pane';
+  const header = document.createElement('div'); header.className = 'source-header';
+  header.innerHTML = `<strong>${escapeText(git.branch)}</strong> <span>${git.changes} changed</span>`;
+  const refreshBtn = document.createElement('button'); refreshBtn.textContent = '⟳'; refreshBtn.className = 'run-btn'; refreshBtn.title = 'Refresh';
+  refreshBtn.addEventListener('click', () => showSourcePane());
+  header.append(refreshBtn);
+  const list = document.createElement('div'); list.className = 'source-list';
+  for (const entry of git.entries) {
+    const row = document.createElement('div'); row.className = 'source-row' + (entry.staged ? ' staged' : '');
+    const st = document.createElement('span'); st.className = 'source-status';
+    st.textContent = entry.untracked ? 'U' : entry.index + (entry.working.trim() ? entry.working : '');
+    const nm = document.createElement('span'); nm.className = 'source-name'; nm.textContent = entry.path; nm.title = entry.path;
+    const act = document.createElement('button'); act.className = 'run-btn';
+    act.textContent = entry.staged ? 'Unstage' : 'Stage';
+    act.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await api(entry.staged ? '/api/git/unstage' : '/api/git/stage', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: entry.path }),
+        });
+        await showSourcePane();
+      } catch (err) { notify(err.message); }
+    });
+    row.addEventListener('click', () => openDiffTab(entry.path));
+    row.append(st, nm, act);
+    list.append(row);
+  }
+  if (!git.entries.length) {
+    const empty = document.createElement('div'); empty.className = 'empty-tree';
+    empty.textContent = 'No changes yet. Commit your work to snapshot it.';
+    list.append(empty);
+  }
+  const commitBox = document.createElement('div'); commitBox.className = 'source-commit';
+  const msgInput = document.createElement('input'); msgInput.placeholder = 'Commit message'; msgInput.id = 'commit-message';
+  const allLabel = document.createElement('label'); allLabel.className = 'source-all';
+  const allCb = document.createElement('input'); allCb.type = 'checkbox'; allCb.id = 'commit-all';
+  allLabel.append(allCb, document.createTextNode(' Commit all changes'));
+  const commitBtn = document.createElement('button'); commitBtn.className = 'run-btn primary'; commitBtn.textContent = 'Commit';
+  commitBtn.addEventListener('click', async () => {
+    const message = msgInput.value.trim();
+    if (!message) { notify('Enter a commit message.'); return; }
+    try {
+      await api('/api/git/commit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, all: allCb.checked }),
+      });
+      msgInput.value = ''; allCb.checked = false; await showSourcePane(); showStatus('Committed');
+    } catch (e) { notify(e.message); }
+  });
+  commitBox.append(msgInput, allLabel, commitBtn);
+  wrap.append(header, list, commitBox);
+  sideContent.append(wrap);
+}
+async function openDiffTab(filePath) {
+  try {
+    const data = await api(`/api/git/diff?path=${encodeURIComponent(filePath)}`);
+    const key = 'diff:' + filePath;
+    if (!state.tabs.has(key)) {
+      const model = state.monaco.editor.createModel(data.diff, 'diff', state.monaco.Uri.parse(`file:///.diff/${filePath}`));
+      state.models.set(key, model);
+      state.tabs.set(key, { dirty: false, model, readOnly: true });
+    }
+    activateTab(key);
+  } catch (error) { notify(error.message); }
+}
+
 async function setView(view) {
   state.activeView = view;
   document.querySelectorAll('.activity').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
@@ -297,7 +375,7 @@ async function setView(view) {
     const message = document.createElement('div'); message.className = 'empty-tree';
     if (view === 'source') {
       try {
-        const git = await api('/api/git');
+        showSourcePane(); return;
         if (!git.repository) message.textContent = 'No Git repository found in this workspace.';
         else message.textContent = `${git.branch || 'Detached HEAD'} · ${git.changes} changed file${git.changes === 1 ? '' : 's'}`;
       } catch (error) { message.textContent = error.message; }
