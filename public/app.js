@@ -29,8 +29,16 @@ async function listDirectory(folder = '') {
   return data.entries;
 }
 async function refreshFiles() {
-  try { state.directoryCache.clear(); await listDirectory(''); await renderTree(); }
-  catch (error) { notify(error.message); }
+  try {
+    const cachedDirs = [...state.directoryCache.keys()];
+    await listDirectory('');
+    for (const dir of cachedDirs) {
+      if (dir && state.expanded.has(dir)) {
+        try { await listDirectory(dir); } catch {}
+      }
+    }
+    await renderTree();
+  } catch (error) { notify(error.message); }
 }
 async function renderTree() {
   sideContent.replaceChildren();
@@ -634,9 +642,8 @@ async function deleteEntry(entry) {
     for (const p of [...state.tabs.keys()]) {
       if (p === entry.path || p.startsWith(entry.path + '/')) closeTab(p);
     }
-    state.directoryCache.clear();
     state.selectedPath = '';
-    await renderTree();
+    await refreshFiles();
     showStatus(`${label[0].toUpperCase()}${label.slice(1)} deleted`);
   } catch (error) { notify(error.message); }
 }
