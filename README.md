@@ -1,39 +1,71 @@
 # CodeHarbor
 
-CodeHarbor is a local browser-based development environment powered by code-server (VS Code in the browser). It provides a full IDE experience with real extension support, integrated terminal, Git integration, and persistent workspaces — all running locally on your Windows machine.
+A complete browser-based coding environment with a real editor, terminal, preview, and an AI assistant that edits your files for you.
 
-## Features
+[Live Website](https://codeharbor-theta.vercel.app/) · [GitHub Repository](https://github.com/rengoku210/CodeHarbor)
 
-- Full VS Code editing experience (syntax highlighting, IntelliSense, minimap, multi-cursor)
-- Real extension support via the Open VSX marketplace — install, enable, disable, uninstall
-- Integrated terminal with PowerShell (PTY-based, not simulated)
-- Git integration (status, diff, commit, branch management)
-- File explorer with full workspace operations
-- Search across files
-- Settings, keybindings, and theme customization
-- Run and debug support
-- Command palette (Ctrl+Shift+P)
+CodeHarbor is a browser IDE built to feel like a desktop development tool. You can open a project, write HTML/CSS/JavaScript with real coding assistance, run it, preview it, fix problems with AI, and manage your changes with Git — all from one tab, without installing an IDE.
 
-## Start
+# Goals
+1. Let developers open a workspace and start writing code immediately.
 
-1. Run `Install-CodeHarbor.ps1` once to install Node.js dependencies.
-2. Run `Start-CodeHarbor.ps1`. It launches the server and opens `http://127.0.0.1:4170` in your browser.
-3. Use the IDE. Files are stored in the `workspace/` directory and persist on disk.
-4. Run `Stop-CodeHarbor.ps1` to stop the server.
+2. Make running and previewing projects one click away.
 
-## Architecture
+3. Use AI that actually edits your files instead of just talking about code.
 
-CodeHarbor runs two processes:
-- **Node.js proxy** (port 4170) — the entry point, handles routing and WebSocket proxying
-- **code-server** (port 4171, internal) — the full VS Code runtime with extension host, terminal, and file system access
+# Features
+1. Explorer: Create, rename, delete, and copy paths for files and folders with right-click menus.
 
-Both bind to `127.0.0.1` only. This is a single-user local tool and should not be exposed to a network.
+2. Editor: Real Monaco editor with tabs, dirty-state indicators, keyboard shortcuts (Ctrl+S, Ctrl+P, Ctrl+J, Ctrl+G, F8).
 
-## Extensions
+3. Quick Open: Press Ctrl+P and fuzzy-search project files, navigate with arrows, and open from the keyboard.
 
-Extensions are installed from the Open VSX marketplace. Use the Extensions sidebar (Ctrl+Shift+X) to search, install, and manage extensions. Installed extensions persist in `.runtime/extensions/` between sessions.
+4. IntelliSense: HTML, CSS, and JavaScript suggestions. Type `!` and press Tab for a full HTML5 boilerplate. HTML tags auto-close.
 
-## Requirements
+5. Go & Selection menus: Go to line/file/symbol/definition, next/previous problem, expand selection, add cursors above/below.
 
-- Windows 10/11
-- Node.js 20 or newer on PATH
+6. Run: A green Run button detects what you're working on — HTML opens a live Preview panel, CSS finds its HTML entry, JS runs via Node or `npm run dev/start/serve`.
+
+7. Preview: Refresh, open in a new tab, close, and auto-reload when you save the file you're previewing.
+
+8. Terminal: A persistent PowerShell terminal connected to the workspace. Run npm, git, node, and normal commands with streaming output.
+
+9. AI Assistant: Ask questions, fix the active file, or explain the last error. The AI reads your open file, patches it, saves it, and the editor updates instantly.
+
+10. Source Control: Initialize a repo, see modified files, stage/unstage, view diffs, and commit — all from the sidebar.
+
+11. Extensions: Open the built-in code-server IDE (`/ide`) for the full VS Code-compatible experience with Open VSX marketplace extensions.
+
+12. Workspace controls: Ctrl + mouse wheel zooms the whole UI (75–150%), Ctrl+0 resets. The AI panel can be docked left or right and resized.
+
+# How to Use
+Use It Online
+
+No account or installation is required to try the hosted version.
+
+Website: https://codeharbor-theta.vercel.app/
+
+# Run It Locally
+1. Clone the CodeHarbor repository.
+
+2. Open the project folder.
+
+3. Run `Install-CodeHarbor.ps1` once to install Node.js dependencies.
+
+4. Run `Start-CodeHarbor.ps1` — it starts the server and opens http://127.0.0.1:4170/ in your browser.
+
+5. Run `Stop-CodeHarbor.ps1` when you want to stop it.
+
+Files live in the `workspace/` folder and persist on disk between sessions.
+
+# How It Works
+CodeHarbor is two processes working together. A Node.js server (port 4170) serves the custom Monaco editor interface, the file and Git APIs, the AI agent, and the WebSocket terminal. A bundled code-server runtime (port 4171) powers the full VS Code-compatible IDE at `/ide` with real extension support. The AI assistant uses the Inception API (Mercury-3) and only touches files inside the workspace.
+
+# AI Assistance
+I used AI while developing CodeHarbor — for the assistant itself, debugging tricky behaviors, and testing features end to end. The built-in AI assistant lets you hand some of that power to users of the product.
+
+# Credits and Acknowledgements
+Created by: Rengoku (@rengoku210) for Hack Club.
+
+Built with Node.js, Express, Monaco Editor, and open-source code-server.
+
