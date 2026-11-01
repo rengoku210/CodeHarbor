@@ -62,7 +62,7 @@ Files live in the `workspace/` folder and persist on disk between sessions.
 CodeHarbor is two processes working together. A Node.js server (port 4170) serves the custom Monaco editor interface, the file and Git APIs, the AI agent, and the WebSocket terminal. A bundled code-server runtime (port 4171) powers the full VS Code-compatible IDE at `/ide` with real extension support. The AI assistant uses the Inception API (Mercury-3) and only touches files inside the workspace.
 
 # AI Assistance
-I used AI while developing CodeHarbor for the assistant itself, debugging tricky behaviors, and testing features end to end. The built-in AI assistant lets you hand some of that power to users of the product.
+CodeHarbor was developed using AI coding tools, which generated most of the code. The core idea, features, functionality, UI/UX preferences, and product direction were defined by me. I personally tested the application, identified bugs, and directed improvements and fixes. AI assisted with implementation, while I led the product development.
 
 # Credits and Acknowledgements
 Created by: Rengoku (@rengoku210) for Hack Club.
