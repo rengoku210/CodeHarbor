@@ -1,0 +1,17 @@
+{
+  "name": "codeharbor",
+  "version": "1.0.0",
+  "description": "A local browser-based code editor with Monaco and safe workspace file operations.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.3.0",
+    "monaco-editor": "^0.57.0"
+  }
+}
