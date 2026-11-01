@@ -325,6 +325,63 @@ a:hover{background:#1177bb}
     }
   });
 
+  // rename a file or folder (name only, within its current parent)
+  app.post('/api/rename', (req, res) => {
+    try {
+      const { path: oldPath, newName } = req.body || {};
+      if (!oldPath || !newName || typeof newName !== 'string') {
+        return res.status(400).json({ error: 'Path and new name are required.' });
+      }
+      const safeNew = newName.trim();
+      if (!safeNew || safeNew === '.' || safeNew === '..' || /[<>:"|?*]/.test(safeNew) || safeNew.includes('/') || safeNew.includes('\\')) {
+        return res.status(400).json({ error: 'Invalid name.' });
+      }
+      const src = resolveWorkspacePath(oldPath);
+      if (src === WORKSPACE) return res.status(400).json({ error: 'Cannot rename the workspace root.' });
+      if (!fs.existsSync(src)) return res.status(404).json({ error: 'Not found.' });
+      const dest = path.join(path.dirname(src), safeNew);
+      if (dest === src) return res.json({ ok: true, path: toWorkspaceRelative(src) });
+      if (fs.existsSync(dest)) return res.status(400).json({ error: 'A file or folder with that name already exists.' });
+      fs.renameSync(src, dest);
+      return res.json({ ok: true, path: toWorkspaceRelative(dest) });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  });
+
+  // move a file or folder to another location inside the workspace
+  app.post('/api/move', (req, res) => {
+    try {
+      const { from, to } = req.body || {};
+      if (!from || !to) return res.status(400).json({ error: 'from and to are required.' });
+      const src = resolveWorkspacePath(from);
+      const dest = resolveWorkspacePath(to);
+      if (src === WORKSPACE) return res.status(400).json({ error: 'Cannot move the workspace root.' });
+      if (!fs.existsSync(src)) return res.status(404).json({ error: 'Source not found.' });
+      if (dest === src) return res.json({ ok: true, path: toWorkspaceRelative(src) });
+      if (fs.existsSync(dest)) return res.status(400).json({ error: 'Destination already exists.' });
+      if (dest.startsWith(src + path.sep)) return res.status(400).json({ error: 'Cannot move a folder into itself.' });
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.renameSync(src, dest);
+      return res.json({ ok: true, path: toWorkspaceRelative(dest) });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  });
+
+  // delete a file or folder (recursive for folders)
+  app.delete('/api/file', (req, res) => {
+    try {
+      const target = resolveWorkspacePath(req.query.path || '');
+      if (target === WORKSPACE) return res.status(400).json({ error: 'Cannot delete the workspace root.' });
+      if (!fs.existsSync(target)) return res.status(404).json({ error: 'Not found.' });
+      fs.rmSync(target, { recursive: true, force: false });
+      return res.json({ ok: true });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+  });
+
   app.get('/api/search', (req, res) => {
     try {
       const query = String(req.query.q || '').trim();
