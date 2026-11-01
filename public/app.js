@@ -322,7 +322,7 @@ function showAiPane() {
   explainBtn.addEventListener('click', explainLastError);
   row.append(input, sendBtn);
   wrap.append(status, list, row, fixBtn, explainBtn);
-  sideContent.append(wrap);
+  mountAiPane(wrap);
 }
 async function showSourcePane() {
   sideContent.replaceChildren();
@@ -596,12 +596,128 @@ async function sendTerminalCommand(command) {
   await runCommand(command);
 }
 function toggleTerminal(force) { const panel = $('bottom-panel'); const shouldOpen = force ?? panel.classList.contains('hidden'); panel.classList.toggle('hidden', !shouldOpen); if (shouldOpen) $('terminal-command').focus(); }
+function mountAiPane(wrap) {
+  const dock = $('ai-dock');
+  if (state.layout.ai === 'right') {
+    $('ai-dock-body').replaceChildren(wrap);
+    dock.classList.remove('hidden');
+  } else {
+    dock.classList.add('hidden');
+    sideContent.append(wrap);
+  }
+}
+function persistLayout() {
+  try { localStorage.setItem('ch.layout', JSON.stringify(state.layout)); } catch {}
+}
+function loadLayout() {
+  const d = { ai: 'left', dockW: 340, bottomH: 180 };
+  try { const saved = JSON.parse(localStorage.getItem('ch.layout')); if (saved && typeof saved === 'object') Object.assign(d, saved); } catch {}
+  state.layout = d;
+}
+function applyLayoutVars() {
+  const area = document.querySelector('.editor-area');
+  if (!area) return;
+  area.style.setProperty('--dock-w', state.layout.dockW + 'px');
+  area.style.setProperty('--bottom-h', state.layout.bottomH + 'px');
+  const dock = $('ai-dock');
+  if (dock) dock.classList.toggle('hidden', state.layout.ai !== 'right');
+}
+function applyDock(edge) {
+  state.layout.ai = edge;
+  persistLayout();
+  applyLayoutVars();
+  const body = $('ai-dock-body');
+  if (body.firstElementChild) {
+    const wrap = body.firstElementChild;
+    body.replaceChildren();
+    mountAiPane(wrap);
+  }
+  if (edge !== 'right') setView('ai');
+}
+function resetLayout() {
+  state.layout = { ai: 'left', dockW: 340, bottomH: 180 };
+  persistLayout();
+  applyLayoutVars();
+  setView('ai');
+  notify('Layout reset');
+}
+function applyZoom(level) {
+  const z = Math.min(150, Math.max(75, Math.round(level)));
+  state.zoom = z;
+  try { localStorage.setItem('ch.zoom', String(z)); } catch {}
+  document.body.style.zoom = (z / 100).toString();
+  const el = $('zoom-status');
+  if (el) el.textContent = z + '%';
+}
+function initZoom() {
+  let z = 100;
+  try { const saved = parseInt(localStorage.getItem('ch.zoom'), 10); if (saved >= 75 && saved <= 150) z = saved; } catch {}
+  applyZoom(z);
+  window.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    applyZoom(state.zoom + (e.deltaY < 0 ? 5 : -5));
+  }, { passive: false, capture: true });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); applyZoom(100); }
+  });
+}
+function initDocking() {
+  loadLayout();
+  applyLayoutVars();
+  let dragging = null;
+  const sashR = $('sash-right');
+  sashR.addEventListener('mousedown', (e) => { e.preventDefault(); dragging = 'w'; document.body.style.cursor = 'col-resize'; });
+  const sashB = $('sash-bottom');
+  sashB.addEventListener('mousedown', (e) => { e.preventDefault(); dragging = 'h'; document.body.style.cursor = 'row-resize'; });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const area = document.querySelector('.editor-area');
+    const rect = area.getBoundingClientRect();
+    if (dragging === 'w') {
+      const w = Math.min(Math.max(rect.right - e.clientX, 240), 620);
+      state.layout.dockW = Math.round(w);
+    } else {
+      const h = Math.min(Math.max(rect.bottom - e.clientY, 110), 420);
+      state.layout.bottomH = Math.round(h);
+    }
+    applyLayoutVars();
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = null; document.body.style.cursor = ''; persistLayout(); }
+  });
+  const head = $('ai-dock-head');
+  if (head) {
+    head.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      $('dock-targets').classList.remove('hidden');
+      const move = (ev) => {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const t = el && el.closest ? el.closest('.dock-target') : null;
+        document.querySelectorAll('.dock-target').forEach((x) => { x.style.background = ''; });
+        if (t) t.style.background = 'rgba(10,120,180,.5)';
+      };
+      const up = (ev) => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        $('dock-targets').classList.add('hidden');
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const t = el && el.closest ? el.closest('.dock-target') : null;
+        if (t) applyDock(t.dataset.dock);
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+  }
+  $('ai-dock-hide').addEventListener('click', () => { $('ai-dock').classList.add('hidden'); state.layout.ai = 'hidden'; persistLayout(); });
+}
 function showMenu(name, button) {
   const actions = {
     File: [['New File', () => openCreate('file')], ['New Folder', () => openCreate('folder')], ['Quick Open…', openQuickOpen], ['Save', saveActive]],
     Edit: [['Undo', () => state.editor.trigger('menu', 'undo')], ['Redo', () => state.editor.trigger('menu', 'redo')], ['Find', () => state.editor.trigger('menu', 'actions.find')]],
     Selection: [['Select All', () => state.editor.trigger('menu', 'editor.action.selectAll')], ['Expand Selection', () => state.editor.trigger('menu', 'editor.action.smartSelect.expand')], ['Shrink Selection', () => state.editor.trigger('menu', 'editor.action.smartSelect.shrink')], ['Add Cursor Above', () => state.editor.trigger('menu', 'editor.action.insertCursorAbove')], ['Add Cursor Below', () => state.editor.trigger('menu', 'editor.action.insertCursorBelow')], ['Select Line', () => state.editor.trigger('menu', 'expandLineSelection')]],
-    View: [['Explorer', () => setView('explorer')], ['Search', () => setView('search')], ['Toggle Terminal', toggleTerminal]],
+    View: [['Explorer', () => setView('explorer')], ['Search', () => setView('search')], ['Toggle Terminal', toggleTerminal], ['AI Assistant (Left)', () => { state.layout.ai = 'left'; applyDock('left'); }], ['AI Assistant (Right)', () => { state.layout.ai = 'right'; applyDock('right'); }], ['Reset Layout', resetLayout], ['Zoom In', () => applyZoom(state.zoom + 5)], ['Zoom Out', () => applyZoom(state.zoom - 5)], ['Reset Zoom', () => applyZoom(100)]],
     Go: [['Go to File…', openQuickOpen], ['Go to Line…', () => state.editor.trigger('menu', 'editor.action.gotoLine')], ['Go to Symbol…', () => state.editor.trigger('menu', 'editor.action.quickOutline')], ['Go to Definition', () => state.editor.trigger('menu', 'editor.action.revealDefinition')], ['Next Problem', () => state.editor.trigger('menu', 'editor.action.marker.next')], ['Previous Problem', () => state.editor.trigger('menu', 'editor.action.marker.prev')]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Terminal: [['New Terminal', () => toggleTerminal(true)], ['Run Command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Help: [['About CodeHarbor', () => notify('CodeHarbor local editor')]],
@@ -866,6 +982,8 @@ document.querySelectorAll('.panel-tab').forEach((tab) => tab.addEventListener('c
 document.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveActive(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); openQuickOpen(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') { event.preventDefault(); toggleTerminal(); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); runProject(); } if (event.key === 'Escape') $('menu-popover').classList.add('hidden'); });
 initMonaco();
 refreshFiles();
+initDocking();
+initZoom();
 initTerminal();
 api('/api/git').then((git) => {
   $('git-status').innerHTML = `⑂ <span>${escapeText(git.repository ? git.branch || 'Detached HEAD' : 'No Git')}</span>`;

@@ -59,6 +59,19 @@
           </div>
           <iframe id="preview-frame" title="Preview"></iframe>
         </div>
+        <div id="ai-dock" class="ai-dock hidden">
+          <div class="ai-dock-head" id="ai-dock-head" title="Drag to dock">
+            <span class="ai-dock-grip">⠿</span><span>AI Assistant</span>
+            <span class="ai-dock-actions"><button id="ai-dock-hide" title="Hide panel">×</button></span>
+          </div>
+          <div id="ai-dock-body"></div>
+        </div>
+        <div id="dock-targets" class="dock-targets hidden">
+          <div class="dock-target left" data-dock="left">◀ Dock Left</div>
+          <div class="dock-target right" data-dock="right">Dock Right ▶</div>
+        </div>
+        <div id="sash-right" class="sash sash-v" title="Drag to resize"></div>
+        <div id="sash-bottom" class="sash sash-h" title="Drag to resize"></div>
         <div class="panel" id="bottom-panel">
           <div class="panel-tabs"><button class="panel-tab active" data-panel="terminal">TERMINAL</button><button class="panel-tab" data-panel="problems">PROBLEMS</button><button class="panel-tab" data-panel="output">OUTPUT</button><button class="panel-tab" data-panel="debug">DEBUG CONSOLE</button><button id="close-panel" class="panel-close" title="Close panel">×</button></div>
           <div id="terminal-view" class="terminal-view"><div class="terminal-label">PowerShell <span>· workspace</span></div><div id="terminal-output" class="terminal-output">CodeHarbor local command runner<br>Commands run in the workspace folder.</div><form id="terminal-form" class="terminal-form"><span>PS <b>workspace</b> &gt;</span><input id="terminal-command" autocomplete="off" spellcheck="false" aria-label="PowerShell command" placeholder="Type a command and press Enter"><button type="submit" aria-label="Run command">↵</button></form></div>
@@ -67,7 +80,7 @@
       </section>
     </main>
 
-    <footer class="statusbar"><div class="status-left"><button id="status-workspace">⌂ <span>workspace</span></button><button id="git-status">⑂ <span>No Git</span></button><span id="save-status">Ready</span></div><div class="status-right"><span id="cursor-status">Ln 1, Col 1</span><span>Spaces: 2</span><span>UTF-8</span><span>CRLF</span><span id="language-status">Plain Text</span><button id="status-terminal">◫ Terminal</button></div></footer>
+    <footer class="statusbar"><div class="status-left"><button id="status-workspace">⌂ <span>workspace</span></button><button id="git-status">⑂ <span>No Git</span></button><span id="save-status">Ready</span></div><div class="status-right"><span id="cursor-status">Ln 1, Col 1</span><span id="zoom-status">100%</span><span>Spaces: 2</span><span>UTF-8</span><span>CRLF</span><span id="language-status">Plain Text</span><button id="status-terminal">◫ Terminal</button></div></footer>
   </div>
 
   <dialog id="create-dialog" class="create-dialog">
