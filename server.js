@@ -18,6 +18,23 @@ const USER_DATA = path.join(RUNTIME, 'user-data');
 const EXT_DIR = path.join(RUNTIME, 'extensions');
 const CONFIG = path.join(RUNTIME, 'config.yaml');
 
+// load optional .env for AI config (never committed; read from disk at startup)
+function loadEnv() {
+  const out = {};
+  try {
+    const raw = fs.readFileSync(path.join(ROOT, '.env'), 'utf8');
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (m) out[m[1]] = m[2].trim();
+    }
+  } catch {}
+  return out;
+}
+const ENV = loadEnv();
+const AI_KEY = ENV.INCEPTION_API_KEY || '';
+const AI_BASE = (ENV.INCEPTION_BASE_URL || 'https://api.inceptionlabs.ai/v1').replace(/\/+$/, '');
+const AI_MODEL = ENV.INCEPTION_MODEL || 'mercury-3';
+
 const PROXY_PORT = 4170;   // what CodeHarbor exposes
 const CS_PORT = 4171;      // internal code-server port
 
@@ -429,6 +446,58 @@ a:hover{background:#1177bb}
   // health endpoint
   app.get('/codeharbor/health', (req, res) => {
     res.json({ status: 'ok', codeServer: csProcess ? 'running' : 'stopped', workspace: WORKSPACE });
+  });
+
+  // ---- AI endpoints (OpenAI-compatible, key from .env only) ----
+  async function askAI(messages) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    try {
+      const response = await fetch(`${AI_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_KEY}` },
+        body: JSON.stringify({ model: AI_MODEL, messages, temperature: 0.2, max_tokens: 1500 }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        return { error: `AI request failed (${response.status}): ${text.slice(0, 300)}` };
+      }
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content ?? '';
+      return { content };
+    } catch (err) {
+      return { error: `AI request error: ${err.message}` };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  app.get('/api/ai/status', (req, res) => {
+    res.json({ configured: Boolean(AI_KEY), model: AI_MODEL });
+  });
+
+  app.post('/api/ai/chat', async (req, res) => {
+    if (!AI_KEY) return res.status(500).json({ error: 'AI is not configured (missing INCEPTION_API_KEY in .env).' });
+    const { messages } = req.body || {};
+    if (!Array.isArray(messages) || messages.length === 0 || !messages.every((m) => m && typeof m.content === 'string')) {
+      return res.status(400).json({ error: 'messages must be an array of {role, content}.' });
+    }
+    const result = await askAI(messages);
+    if (result.error) return res.status(502).json({ error: result.error });
+    return res.json({ content: result.content });
+  });
+
+  app.post('/api/ai/explain-error', async (req, res) => {
+    if (!AI_KEY) return res.status(500).json({ error: 'AI is not configured (missing INCEPTION_API_KEY in .env).' });
+    const { error } = req.body || {};
+    if (!error || typeof error !== 'string') return res.status(400).json({ error: 'error text is required.' });
+    const result = await askAI([
+      { role: 'system', content: 'You are a concise debugging assistant for a browser IDE. Explain the error below in 3-6 sentences and suggest concrete fixes. Use plain text, no markdown.' },
+      { role: 'user', content: `Error output:\n${error.slice(0, 4000)}` },
+    ]);
+    if (result.error) return res.status(502).json({ error: result.error });
+    return res.json({ content: result.content });
   });
 
   // proxy everything else to code-server
