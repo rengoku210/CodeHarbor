@@ -412,19 +412,112 @@ a:hover{background:#1177bb}
     }
   });
 
+  // --- Git helpers and routes ---
+  function runGit(args, opts = {}) {
+    return require('node:child_process').execFileSync('git', ['-C', WORKSPACE, ...args], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...opts,
+    });
+  }
+  function parsePorcelain(out) {
+    const entries = [];
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const x = line[0];
+      const y = line[1];
+      let path = line.slice(3);
+      if (path.startsWith('"')) {
+        try { path = JSON.parse(path); } catch {}
+      }
+      let oldPath = null;
+      const arrow = path.indexOf(' -> ');
+      if (arrow !== -1 && (x === 'R' || x === 'C')) {
+        oldPath = path.slice(0, arrow);
+        path = path.slice(arrow + 4);
+      }
+      entries.push({ path, oldPath, index: x, working: y, staged: x !== ' ' && x !== '?' && x !== '!', untracked: x === '?' });
+    }
+    return entries;
+  }
+
   app.get('/api/git', (req, res) => {
     try {
       const gitDir = path.join(WORKSPACE, '.git');
       if (!fs.existsSync(gitDir)) {
-        return res.json({ repository: false, branch: null, changes: 0 });
+        return res.json({ repository: false, branch: null, changes: 0, entries: [] });
       }
-      const branchOut = require('node:child_process').execSync('git -C "' + WORKSPACE + '" branch --show-current', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-      const statusOut = require('node:child_process').execSync('git -C "' + WORKSPACE + '" status --short', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-      const changes = statusOut.split(/\r?\n/).filter(Boolean).length;
-      return res.json({ repository: true, branch: branchOut || 'Detached HEAD', changes });
+      const branchOut = runGit(['branch', '--show-current']).trim();
+      let aheadBehind = '';
+      try { aheadBehind = runGit(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).trim() || ''; } catch {}
+      const statusOut = runGit(['status', '--porcelain=v1']);
+      const entries = parsePorcelain(statusOut);
+      return res.json({ repository: true, branch: branchOut || 'Detached HEAD', changes: entries.length, entries, aheadBehind });
     } catch (error) {
-      return res.json({ repository: false, branch: null, changes: 0 });
+      return res.status(500).json({ error: error.message });
     }
+  });
+
+  app.post('/api/git/init', (req, res) => {
+    try {
+      runGit(['init']);
+      return res.json({ ok: true });
+    } catch (error) { return res.status(400).json({ error: error.message }); }
+  });
+
+  app.post('/api/git/stage', (req, res) => {
+    try {
+      const p = resolveWorkspacePath(req.body?.path || '');
+      const rel = toWorkspaceRelative(p);
+      runGit(['add', '-A', '--', rel]);
+      return res.json({ ok: true });
+    } catch (error) { return res.status(400).json({ error: error.message }); }
+  });
+
+  app.post('/api/git/unstage', (req, res) => {
+    try {
+      const p = resolveWorkspacePath(req.body?.path || '');
+      const rel = toWorkspaceRelative(p);
+      runGit(['restore', '--staged', '--', rel]);
+      return res.json({ ok: true });
+    } catch (error) { return res.status(400).json({ error: error.message }); }
+  });
+
+  app.get('/api/git/diff', (req, res) => {
+    try {
+      const p = resolveWorkspacePath(String(req.query.path || ''));
+      const rel = toWorkspaceRelative(p);
+      const gitDir = path.join(WORKSPACE, '.git');
+      if (!fs.existsSync(gitDir)) return res.status(400).json({ error: 'Not a git repository.' });
+      let diff = '';
+      try { diff = runGit(['diff', '--', rel]); } catch {}
+      if (!diff) { try { diff = runGit(['diff', '--cached', '--', rel]); } catch {} }
+      if (!diff) {
+        const content = fs.readFileSync(p, 'utf8');
+        diff = content.split(/\r?\n/).map((l) => '+' + l).join('\n');
+        diff = `diff --git a/${rel} b/${rel}\nnew file mode 100644\n--- /dev/null\n+++ b/${rel}\n${diff}\n`;
+      }
+      return res.json({ path: rel, diff });
+    } catch (error) { return res.status(400).json({ error: error.message }); }
+  });
+
+  app.post('/api/git/commit', (req, res) => {
+    try {
+      const message = String(req.body?.message || '').trim();
+      const all = Boolean(req.body?.all);
+      if (!message) return res.status(400).json({ error: 'A commit message is required.' });
+      if (all) {
+        runGit(['add', '-A']);
+      } else {
+        const statusOut = runGit(['status', '--porcelain=v1']);
+        const entries = parsePorcelain(statusOut);
+        if (!entries.some((e) => e.staged)) {
+          return res.status(400).json({ error: 'There are no staged changes to commit.' });
+        }
+      }
+      runGit(['commit', '-m', message]);
+      return res.json({ ok: true });
+    } catch (error) { return res.status(400).json({ error: error.message }); }
   });
 
   app.post('/api/run', (req, res) => {
