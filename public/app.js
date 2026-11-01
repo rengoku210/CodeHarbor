@@ -269,11 +269,143 @@ function applyAIContent(path, content) {
   tab.dirty = false;
   if (state.activePath === path) renderTabs();
 }
+function extractCodeFiles(text, activeFile, userGoal = '') {
+  const files = [];
+  if (!text || typeof text !== 'string') return { files, cleanReport: '' };
+  const trimmed = text.trim();
+  const goalLower = String(userGoal || '').toLowerCase();
+  const isCreationRequest = /make|create|build|generate|code|write|website|page|app|calculator|landing|portfolio|game|clone|component|html|css|style/i.test(goalLower);
+
+  const jsonMatches = trimmed.match(/\{[\s\S]*?"tool"\s*:\s*"write_file"[\s\S]*?\}/g);
+  if (jsonMatches) {
+    for (const jm of jsonMatches) {
+      try {
+        const obj = JSON.parse(jm);
+        if (obj.tool === 'write_file' && obj.path && typeof obj.content === 'string') {
+          files.push({ path: obj.path.replace(/^[/\\]+/, '').trim(), content: obj.content });
+        }
+      } catch {}
+    }
+    if (files.length) {
+      let clean = trimmed;
+      for (const jm of jsonMatches) clean = clean.replace(jm, '');
+      clean = clean.replace(/```(?:json)?|```/g, '').trim();
+      return { files, cleanReport: clean };
+    }
+  }
+
+  // Partial or truncated JSON tool call recovery
+  if (trimmed.includes('"tool"') && trimmed.includes('"write_file"') && trimmed.includes('"content"')) {
+    const pathMatch = trimmed.match(/"path"\s*:\s*"([^"]+)"/);
+    const contentIndex = trimmed.indexOf('"content"');
+    if (pathMatch && contentIndex !== -1) {
+      const filePath = pathMatch[1].replace(/^[/\\]+/, '').trim();
+      const colonIndex = trimmed.indexOf(':', contentIndex);
+      if (colonIndex !== -1) {
+        let val = trimmed.slice(colonIndex + 1).trim();
+        if (val.startsWith('"')) val = val.slice(1);
+        if (val.endsWith('"}')) val = val.slice(0, -2);
+        else if (val.endsWith('"\n}')) val = val.slice(0, -3);
+        else if (val.endsWith('"')) val = val.slice(0, -1);
+        val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t').replace(/\\\\/g, '\\');
+        if (val.trim()) {
+          files.push({ path: filePath, content: val });
+          return { files, cleanReport: '' };
+        }
+      }
+    }
+  }
+
+  const fenceRegex = /```([a-zA-Z0-9_\-.:]*)\s*\n([\s\S]*?)```/g;
+  let match;
+  let hasFences = false;
+  let textWithoutCode = trimmed;
+
+  while ((match = fenceRegex.exec(trimmed)) !== null) {
+    hasFences = true;
+    const info = (match[1] || '').trim().toLowerCase();
+    const content = match[2];
+    textWithoutCode = textWithoutCode.replace(match[0], '');
+
+    let filePath = null;
+    if (info.includes(':')) {
+      filePath = info.split(':')[1].trim();
+    } else if (info.includes('=')) {
+      filePath = info.split('=')[1].replace(/["']/g, '').trim();
+    }
+
+    if (!filePath) {
+      const headerMatch = content.slice(0, 250).match(/(?:\/\*|<!--|\/\/|#)\s*(?:file:?\s*)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i);
+      if (headerMatch && headerMatch[1]) {
+        const cand = headerMatch[1].trim();
+        if (cand.includes('.')) filePath = cand;
+      }
+    }
+
+    if (!filePath) {
+      const preceding = trimmed.slice(Math.max(0, match.index - 120), match.index);
+      const preMatch = preceding.match(/(?:^|\n)(?:###|\*\*|File:?|Filename:?)\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
+      if (preMatch && preMatch[1]) filePath = preMatch[1].trim();
+    }
+
+    if (!filePath) {
+      const lang = info.split(/[\s:]/)[0];
+      if (lang === 'html' || lang === 'htm' || content.includes('<!DOCTYPE') || content.includes('<html')) {
+        filePath = (activeFile && activeFile.endsWith('.html')) ? activeFile : 'index.html';
+      } else if (lang === 'css' || (lang === 'style' && !content.includes('<'))) {
+        filePath = (activeFile && activeFile.endsWith('.css')) ? activeFile : 'styles.css';
+      } else if (['js', 'javascript', 'mjs', 'ts', 'typescript'].includes(lang)) {
+        filePath = (activeFile && (activeFile.endsWith('.js') || activeFile.endsWith('.ts'))) ? activeFile : 'script.js';
+      } else if (lang === 'json') {
+        filePath = (activeFile && activeFile.endsWith('.json')) ? activeFile : 'data.json';
+      } else if (activeFile) {
+        filePath = activeFile;
+      } else if (isCreationRequest) {
+        filePath = 'index.html';
+      }
+    }
+
+    if (filePath && content.trim()) {
+      files.push({ path: filePath.replace(/^[/\\]+/, ''), content });
+    }
+  }
+
+  if (hasFences && files.length) {
+    const clean = textWithoutCode.replace(/`{3,}/g, '').trim();
+    return { files, cleanReport: clean };
+  }
+
+  if (!hasFences && !trimmed.startsWith('{') && !trimmed.includes('"tool":')) {
+    if (trimmed.includes('<!DOCTYPE') || (trimmed.startsWith('<') && (trimmed.includes('</html>') || trimmed.includes('</body>')))) {
+      const target = (activeFile && activeFile.endsWith('.html')) ? activeFile : 'index.html';
+      files.push({ path: target, content: trimmed });
+      return { files, cleanReport: '' };
+    }
+    if ((/[a-zA-Z0-9_#.-]+\s*\{[\s\S]*?:[\s\S]*?\}/.test(trimmed) || trimmed.startsWith('background:') || trimmed.startsWith('body {')) && !trimmed.includes('<html')) {
+      const target = (activeFile && activeFile.endsWith('.css')) ? activeFile : 'styles.css';
+      files.push({ path: target, content: trimmed });
+      return { files, cleanReport: '' };
+    }
+    if (isCreationRequest && activeFile && trimmed.length > 30) {
+      files.push({ path: activeFile, content: trimmed });
+      return { files, cleanReport: '' };
+    }
+  }
+
+  return { files, cleanReport: trimmed };
+}
+
 async function clientAiAgent(prompt, ctx, apiKey) {
   const baseUrl = localStorage.getItem('ch.ai_base') || 'https://api.inceptionlabs.ai/v1';
   const model = localStorage.getItem('ch.ai_model') || 'mercury-3';
   const messages = [
-    { role: 'system', content: 'You are CodeHarbor AI coding assistant. Provide concise, accurate solutions. When editing code, output the full updated file or replacement snippets in clean markdown code blocks.' },
+    {
+      role: 'system',
+      content:
+        'You are CodeHarbor\'s AI coding engine. When asked to build, create, or modify a website, app, or code, DO NOT dump raw code into chat.\n' +
+        'Output complete files with markdown fences and filenames (e.g. ```html:index.html or ```css:styles.css) or write_file JSON tools so CodeHarbor saves them directly into the workspace editor.\n' +
+        'Keep chat commentary to 1-2 brief friendly sentences.',
+    },
   ];
   if (ctx.activeFile && ctx.activeContent) {
     messages.push({ role: 'user', content: `Active file: ${ctx.activeFile}\nContent:\n${ctx.activeContent.slice(0, 8000)}` });
@@ -283,7 +415,7 @@ async function clientAiAgent(prompt, ctx, apiKey) {
   const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages, temperature: 0.2, max_tokens: 1500 }),
+    body: JSON.stringify({ model, messages, temperature: 0.2, max_tokens: 4000 }),
   });
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
@@ -291,7 +423,26 @@ async function clientAiAgent(prompt, ctx, apiKey) {
   }
   const data = await resp.json();
   const reply = data.choices?.[0]?.message?.content || 'No response generated.';
-  return { report: reply };
+  const created = [];
+  const extracted = extractCodeFiles(reply, ctx.activeFile, prompt);
+  if (extracted.files.length) {
+    for (const f of extracted.files) {
+      try {
+        await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: f.path, content: f.content }) });
+        created.push(f.path);
+      } catch (err) {
+        console.error('Failed to save file:', f.path, err);
+      }
+    }
+  }
+  let cleanReport = extracted.cleanReport || '';
+  if (created.length && cleanReport.includes('```')) {
+    cleanReport = cleanReport.replace(/```[a-zA-Z0-9_\-.:]*[\s\S]*?```/g, '').trim();
+  }
+  if (created.length && (!cleanReport || cleanReport.length > 400)) {
+    cleanReport = `Created ${[...new Set(created)].join(' and ')} in CodeHarbor's editor. Click ▶ Run in the top bar to preview!`;
+  }
+  return { report: cleanReport || reply, created: [...new Set(created)], applied: [], deleted: [] };
 }
 async function chatSend(text) {
   addChatMessage('user', text);
@@ -334,8 +485,8 @@ async function chatSend(text) {
       if (customKey) {
         result = await clientAiAgent(text, { activeFile: active, activeContent, selection: selectionText, cursorLine }, customKey);
       } else {
-        throw new Error(apiErr.message.includes('404')
-          ? 'Live website mode: Click "Set API Key" above to enable AI on this live site.'
+        throw new Error(apiErr.message.includes('404') || apiErr.message.includes('missing INCEPTION_API_KEY')
+          ? 'Enter your free Inception API key above to generate code directly into CodeHarbor.'
           : apiErr.message);
       }
     }
@@ -343,16 +494,58 @@ async function chatSend(text) {
     typingDiv.remove();
 
     if (result) {
+      // Safety net: check if result has unsaved code blocks or raw code
+      if ((!result.created || !result.created.length) && (result.report || result.content)) {
+        const extra = extractCodeFiles(result.report || result.content, active, text);
+        if (extra.files.length) {
+          result.created = result.created || [];
+          for (const f of extra.files) {
+            try {
+              await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: f.path, content: f.content }) });
+              result.created.push(f.path);
+            } catch {}
+          }
+          if (result.created.length) {
+            result.report = extra.cleanReport || `Created ${result.created.join(' and ')} in CodeHarbor's editor. Click ▶ Run in the top bar to preview!`;
+          }
+        }
+      }
+
       const touched = [...new Set([...(result.applied || []), ...(result.created || []), ...(result.deleted || [])])];
       for (const tp of touched) {
-        if (tp === active && state.tabs.has(tp)) {
-          try { const d = await api('/api/file?path=' + encodeURIComponent(tp)); applyAIContent(tp, d.content); } catch {}
+        if (state.tabs.has(tp)) {
+          try {
+            const d = await api('/api/file?path=' + encodeURIComponent(tp));
+            applyAIContent(tp, d.content);
+          } catch {}
         }
       }
       if (touched.length) await refreshFiles();
+
       const fresh = result.created || [];
-      if (fresh.length && !active) { try { await openFile(fresh[0]); } catch {} }
-      addChatMessage('assistant', result.report || result.content || 'Done.');
+      if (fresh.length) {
+        // Find primary file: index.html preferred, or first HTML file, or first created file
+        const target = fresh.find((f) => f.endsWith('index.html')) || fresh.find((f) => f.endsWith('.html')) || fresh[0];
+        try {
+          await openFile(target);
+          activateTab(target);
+        } catch (e) {
+          console.error('Failed to open file in editor:', e);
+        }
+      }
+
+      // Check if report has raw code fences or excessive code, and clean it up for chat
+      let chatMessage = (result.report || result.content || '').trim();
+      if (chatMessage.includes('```')) {
+        chatMessage = chatMessage.replace(/```[a-zA-Z0-9_\-.:]*[\s\S]*?```/g, '').trim();
+      }
+      if (!chatMessage || (fresh.length && chatMessage.length > 400)) {
+        chatMessage = fresh.length
+          ? `Created ${fresh.join(' and ')} in CodeHarbor's editor. Click ▶ Run in the top bar to preview!`
+          : 'Done.';
+      }
+
+      addChatMessage('assistant', chatMessage);
     }
   } catch (error) {
     typingDiv.remove();
@@ -366,16 +559,41 @@ function showAiPane() {
   const status = document.createElement('div');
   status.className = 'ai-status';
 
+  const noticeBox = document.createElement('div');
+  noticeBox.className = 'ai-notice-card';
+  noticeBox.innerHTML = `
+    <div class="ai-notice-top">
+      <span class="ai-notice-tag">⚡ Recommended AI Engine</span>
+      <span class="ai-notice-pill">Free &amp; Ultra-Fast</span>
+    </div>
+    <div class="ai-notice-desc">
+      Use your API key from <strong>Inception Labs</strong> (Base URL: <code>https://api.inceptionlabs.ai/v1</code>).
+      The pre-configured <strong>mercury-3</strong> model is completely <strong>free, ultra-fast</strong>, and creates code directly in CodeHarbor's editor!
+    </div>
+    <div class="ai-notice-links">
+      <a href="https://api.inceptionlabs.ai" target="_blank" rel="noopener" class="ai-notice-a">Get Free Key &rarr;</a>
+      <button type="button" class="ai-notice-btn" id="ai-notice-config-btn">Configure Key</button>
+    </div>
+  `;
+
   const keyBox = document.createElement('div');
   keyBox.className = 'ai-key-box hidden';
   keyBox.innerHTML = `
-    <label>Inception / OpenAI API Key:</label>
-    <input type="password" id="ai-custom-key" placeholder="Paste your API key…" autocomplete="off">
+    <label>Inception Labs API Key (Recommended):</label>
+    <div style="font-size:11px;color:#888;line-height:1.4;">
+      Enter the API key for your preconfigured base URL (<a href="https://api.inceptionlabs.ai" target="_blank" rel="noopener" style="color:#4aa3df;">api.inceptionlabs.ai</a>). The <strong>mercury-3</strong> model is free and fast.
+    </div>
+    <input type="password" id="ai-custom-key" placeholder="Paste your API key (sk_...)" autocomplete="off">
     <div class="ai-key-actions">
       <button type="button" id="ai-key-cancel">Cancel</button>
       <button type="button" class="primary" id="ai-key-save">Save</button>
     </div>
   `;
+
+  noticeBox.querySelector('#ai-notice-config-btn')?.addEventListener('click', () => {
+    keyBox.classList.remove('hidden');
+    keyBox.querySelector('input')?.focus();
+  });
 
   const renderStatus = () => {
     const customKey = localStorage.getItem('ch.ai_key') || '';
@@ -438,7 +656,7 @@ function showAiPane() {
   } else {
     const welcome = document.createElement('div');
     welcome.className = 'ai-message assistant';
-    welcome.innerHTML = 'Hi! I am your CodeHarbor AI assistant.<br><small style="color:#888">Ask me to write code, explain errors, or fix your active file.</small>';
+    welcome.innerHTML = 'Hi! I am your CodeHarbor AI assistant.<br><small style="color:#bbb">Ask me to build a website, add features, or fix code — I will create the files directly in CodeHarbor\'s editor!</small><br><small style="color:#72c690;display:block;margin-top:6px;">⚡ <strong>Free &amp; Fast:</strong> Powered by Inception Labs (<code>mercury-3</code>). Use your free key from <code>https://api.inceptionlabs.ai</code>.</small>';
     list.append(welcome);
   }
 
@@ -472,7 +690,7 @@ function showAiPane() {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
   explainBtn.addEventListener('click', explainLastError);
   row.append(input, sendBtn);
-  wrap.append(status, keyBox, list, row, fixBtn, explainBtn);
+  wrap.append(status, noticeBox, keyBox, list, row, fixBtn, explainBtn);
   mountAiPane(wrap);
 }
 async function showSourcePane() {

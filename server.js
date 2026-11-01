@@ -627,23 +627,152 @@ a:hover{background:#1177bb}
     }
   }
 
+  // Extract files from model responses that fail to output single JSON tool calls
+  function extractCodeFiles(text, activeFile, userGoal = '') {
+    const files = [];
+    if (!text || typeof text !== 'string') return { files, cleanReport: '' };
+    const trimmed = text.trim();
+    const goalLower = String(userGoal || '').toLowerCase();
+    const isCreationRequest = /make|create|build|generate|code|write|website|page|app|calculator|landing|portfolio|game|clone|component|html|css|style/i.test(goalLower);
+
+    // 1. JSON tool calls embedded anywhere: {"tool":"write_file","path":"...","content":"..."}
+    const jsonMatches = trimmed.match(/\{[\s\S]*?"tool"\s*:\s*"write_file"[\s\S]*?\}/g);
+    if (jsonMatches) {
+      for (const jm of jsonMatches) {
+        try {
+          const obj = JSON.parse(jm);
+          if (obj.tool === 'write_file' && obj.path && typeof obj.content === 'string') {
+            files.push({ path: obj.path.replace(/^[/\\]+/, '').trim(), content: obj.content });
+          }
+        } catch {}
+      }
+      if (files.length) {
+        let clean = trimmed;
+        for (const jm of jsonMatches) clean = clean.replace(jm, '');
+        clean = clean.replace(/```(?:json)?|```/g, '').trim();
+        return { files, cleanReport: clean };
+      }
+    }
+
+    // 1b. Partial or truncated JSON tool call recovery
+    if (trimmed.includes('"tool"') && trimmed.includes('"write_file"') && trimmed.includes('"content"')) {
+      const pathMatch = trimmed.match(/"path"\s*:\s*"([^"]+)"/);
+      const contentIndex = trimmed.indexOf('"content"');
+      if (pathMatch && contentIndex !== -1) {
+        const filePath = pathMatch[1].replace(/^[/\\]+/, '').trim();
+        const colonIndex = trimmed.indexOf(':', contentIndex);
+        if (colonIndex !== -1) {
+          let val = trimmed.slice(colonIndex + 1).trim();
+          if (val.startsWith('"')) val = val.slice(1);
+          if (val.endsWith('"}')) val = val.slice(0, -2);
+          else if (val.endsWith('"\n}')) val = val.slice(0, -3);
+          else if (val.endsWith('"')) val = val.slice(0, -1);
+          val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t').replace(/\\\\/g, '\\');
+          if (val.trim()) {
+            files.push({ path: filePath, content: val });
+            return { files, cleanReport: '' };
+          }
+        }
+      }
+    }
+
+    // 2. Fenced markdown code blocks: ```lang or ```lang:filename
+    const fenceRegex = /```([a-zA-Z0-9_\-.:]*)\s*\n([\s\S]*?)```/g;
+    let match;
+    let hasFences = false;
+    let textWithoutCode = trimmed;
+
+    while ((match = fenceRegex.exec(trimmed)) !== null) {
+      hasFences = true;
+      const info = (match[1] || '').trim().toLowerCase();
+      const content = match[2];
+      textWithoutCode = textWithoutCode.replace(match[0], '');
+
+      let filePath = null;
+      if (info.includes(':')) {
+        filePath = info.split(':')[1].trim();
+      } else if (info.includes('=')) {
+        filePath = info.split('=')[1].replace(/["']/g, '').trim();
+      }
+
+      if (!filePath) {
+        const headerMatch = content.slice(0, 250).match(/(?:\/\*|<!--|\/\/|#)\s*(?:file:?\s*)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i);
+        if (headerMatch && headerMatch[1]) {
+          const cand = headerMatch[1].trim();
+          if (cand.includes('.')) filePath = cand;
+        }
+      }
+
+      if (!filePath) {
+        const preceding = trimmed.slice(Math.max(0, match.index - 120), match.index);
+        const preMatch = preceding.match(/(?:^|\n)(?:###|\*\*|File:?|Filename:?)\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
+        if (preMatch && preMatch[1]) filePath = preMatch[1].trim();
+      }
+
+      if (!filePath) {
+        const lang = info.split(/[\s:]/)[0];
+        if (lang === 'html' || lang === 'htm' || content.includes('<!DOCTYPE') || content.includes('<html')) {
+          filePath = (activeFile && activeFile.endsWith('.html')) ? activeFile : 'index.html';
+        } else if (lang === 'css' || (lang === 'style' && !content.includes('<'))) {
+          filePath = (activeFile && activeFile.endsWith('.css')) ? activeFile : 'styles.css';
+        } else if (['js', 'javascript', 'mjs', 'ts', 'typescript'].includes(lang)) {
+          filePath = (activeFile && (activeFile.endsWith('.js') || activeFile.endsWith('.ts'))) ? activeFile : 'script.js';
+        } else if (lang === 'json') {
+          filePath = (activeFile && activeFile.endsWith('.json')) ? activeFile : 'data.json';
+        } else if (activeFile) {
+          filePath = activeFile;
+        } else if (isCreationRequest) {
+          filePath = 'index.html';
+        }
+      }
+
+      if (filePath && content.trim()) {
+        files.push({ path: filePath.replace(/^[/\\]+/, ''), content });
+      }
+    }
+
+    if (hasFences && files.length) {
+      const clean = textWithoutCode.replace(/`{3,}/g, '').trim();
+      return { files, cleanReport: clean };
+    }
+
+    // 3. Raw un-fenced code (direct HTML or CSS output)
+    if (!hasFences && !trimmed.startsWith('{') && !trimmed.includes('"tool":')) {
+      if (trimmed.includes('<!DOCTYPE') || (trimmed.startsWith('<') && (trimmed.includes('</html>') || trimmed.includes('</body>')))) {
+        const target = (activeFile && activeFile.endsWith('.html')) ? activeFile : 'index.html';
+        files.push({ path: target, content: trimmed });
+        return { files, cleanReport: '' };
+      }
+      if ((/[a-zA-Z0-9_#.-]+\s*\{[\s\S]*?:[\s\S]*?\}/.test(trimmed) || trimmed.startsWith('background:') || trimmed.startsWith('body {')) && !trimmed.includes('<html')) {
+        const target = (activeFile && activeFile.endsWith('.css')) ? activeFile : 'styles.css';
+        files.push({ path: target, content: trimmed });
+        return { files, cleanReport: '' };
+      }
+      if (isCreationRequest && activeFile && trimmed.length > 30) {
+        files.push({ path: activeFile, content: trimmed });
+        return { files, cleanReport: '' };
+      }
+    }
+
+    return { files, cleanReport: trimmed };
+  }
+
   // Serve workspace files for the Preview panel (path-safe, proper MIME types).
   // Must be mounted before the catch-all proxy to code-server.
   app.use('/preview', express.static(WORKSPACE, { index: false }));
 
   const AI_TOOL_SYSTEM =
-    'You are the CodeHarbor AI coding agent. You can inspect and modify files inside the workspace.\n' +
-    'When asked to create, fix, modify, or improve code, USE A TOOL instead of dumping code into the chat.\n' +
-    'Available tools. Always answer with ONLY a JSON object (no prose, no markdown fences) of one of these forms:\n' +
+    'You are CodeHarbor\'s AI coding engine. You write and edit files directly in the user\'s workspace.\n' +
+    'CRITICAL: When the user asks you to create, build, or modify a website, app, or code, DO NOT dump raw code into the chat.\n' +
+    'You MUST use the write_file tool to save each file (e.g. index.html, styles.css, script.js).\n' +
+    'Always answer with ONLY a JSON object (no prose, no markdown fences) of one of these forms:\n' +
     '{"tool":"list_files","path":"<dir or empty>"}\n' +
     '{"tool":"read_file","path":"<file>"}\n' +
     '{"tool":"write_file","path":"<file>","content":"<full new content>"}\n' +
     '{"tool":"patch_file","path":"<file>","edits":[{"action":"replace|insert|delete","startLine":N,"endLine":N,"text":"<text>"}]}\n' +
     '{"tool":"delete_file","path":"<file>"}\n' +
     '{"tool":"rename_file","from":"<file>","to":"<file>"}\n' +
-    'Edits: replace swaps lines startLine..endLine with text; insert puts text before startLine; delete removes lines startLine..endLine.\n' +
-    'Paths are workspace-relative (e.g. "src/app.js"). After finishing all tool calls, respond with a final summary (plain text): ' +
-    'what you changed and why, in 2-4 short sentences. If the user asked for an explanation or question, just answer directly without tools.';
+    'Paths are workspace-relative (e.g. "index.html", "styles.css"). After saving all files, provide a 1-sentence friendly confirmation.';
 
   app.post('/api/ai/agent', async (req, res) => {
     if (!AI_KEY) return res.status(500).json({ error: 'AI is not configured (missing INCEPTION_API_KEY in .env).' });
@@ -667,17 +796,33 @@ a:hover{background:#1177bb}
     let report = '', finalText = '';
     for (let round = 0; round < 6; round++) {
       const result = await askAI(messages);
+      const text = (result.content || '').trim();
       if (result.error) {
         if (!report) return res.status(502).json({ error: result.error });
         break;
       }
-      const text = result.content.trim();
       finalText = text;
       let action = null;
       const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
       const candidate = fence ? fence[1] : text;
       try { action = JSON.parse(candidate); } catch {}
-      if (!action || typeof action.tool !== 'string') { report = text; break; }
+      if (!action || typeof action.tool !== 'string') {
+        const extracted = extractCodeFiles(text, cx.activeFile, goal);
+        if (extracted.files.length) {
+          for (const f of extracted.files) {
+            try {
+              aiWriteFile(f.path, f.content);
+              created.push(f.path);
+            } catch (err) {
+              console.error('Failed to write extracted file:', f.path, err.message);
+            }
+          }
+          report = extracted.cleanReport || (created.length ? `Created ${created.join(' and ')} in CodeHarbor's editor. Click ▶ Run in the top bar to preview!` : text);
+        } else {
+          report = text;
+        }
+        break;
+      }
       try {
         const toolResult = executeAiTool(action);
         if (action.tool === 'write_file') created.push(action.path);
@@ -690,7 +835,15 @@ a:hover{background:#1177bb}
         messages.push({ role: 'user', content: 'TOOL ERROR: ' + err.message + ' Please correct the request and try again, or respond with a final summary.' });
       }
     }
-    return res.json({ report: report || finalText, applied, created, deleted });
+
+    let finalReport = report || finalText;
+    if (created.length && finalReport.includes('```')) {
+      finalReport = finalReport.replace(/```[a-zA-Z0-9_\-.:]*[\s\S]*?```/g, '').trim();
+    }
+    if (created.length && (!finalReport || finalReport.length > 400)) {
+      finalReport = `Created ${[...new Set(created)].join(' and ')} in CodeHarbor's editor. Click ▶ Run in the top bar to preview!`;
+    }
+    return res.json({ report: finalReport, applied, created, deleted });
   });
 
   // health endpoint
@@ -706,7 +859,7 @@ a:hover{background:#1177bb}
       const response = await fetch(`${AI_BASE}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_KEY}` },
-        body: JSON.stringify({ model: AI_MODEL, messages, temperature: 0.2, max_tokens: 1500 }),
+        body: JSON.stringify({ model: AI_MODEL, messages, temperature: 0.2, max_tokens: 4000 }),
         signal: controller.signal,
       });
       if (!response.ok) {

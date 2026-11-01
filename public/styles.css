@@ -15,3 +15,15 @@
 .ai-dock{position:absolute;top:0;right:0;bottom:0;width:var(--dock-w);background:#1e1e1e;border-left:1px solid #303030;display:flex;flex-direction:column;z-index:21}.ai-dock-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #303030;cursor:grab;user-select:none;color:#ddd;font-size:12px;font-weight:600;flex:none}.ai-dock-head:active{cursor:grabbing}.ai-dock-grip{color:#858585}.ai-dock-actions{margin-left:auto}.ai-dock-head button{background:none;border:0;color:#bbb;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:3px}.ai-dock-head button:hover{background:#2a2d2e;color:#fff}#ai-dock-body{flex:1;min-height:0;display:flex;flex-direction:column}
 .dock-targets{position:absolute;inset:0;z-index:60;pointer-events:none}.dock-target{position:absolute;top:8px;bottom:8px;width:34%;display:grid;place-items:center;border:2px dashed #4aa3df;border-radius:8px;background:rgba(10,80,140,.18);color:#9fd0ff;font-weight:700;pointer-events:auto;opacity:.85}.dock-target.left{left:8px}.dock-target.right{right:8px}.dock-target:hover{background:rgba(10,120,180,.35);color:#fff}
 .sash{position:absolute;z-index:50;background:transparent}.sash:hover{background:rgba(74,163,223,.55)}.sash-v{top:0;bottom:0;width:5px;right:calc(var(--dock-w) - 2px);cursor:col-resize}.sash-h{left:0;right:0;height:5px;bottom:calc(var(--bottom-h) - 2px);cursor:row-resize}
+.ai-notice-card{margin:8px 12px;padding:9px 11px;background:#1e242a;border:1px solid #303e4d;border-left:3px solid #72c690;border-radius:4px;display:flex;flex-direction:column;gap:5px;flex:none}
+.ai-notice-top{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ai-notice-tag{font-size:11px;font-weight:600;color:#72c690}
+.ai-notice-pill{font-size:10px;background:rgba(114,198,144,.15);color:#72c690;padding:2px 6px;border-radius:10px;font-weight:600}
+.ai-notice-desc{font-size:11px;color:#bbb;line-height:1.45}
+.ai-notice-desc strong{color:#fff}
+.ai-notice-desc code{background:#2a333c;padding:1px 4px;border-radius:3px;font-size:10px;color:#9cdcfe;font-family:Consolas,monospace}
+.ai-notice-links{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px}
+.ai-notice-a{color:#4aa3df;font-size:11px;text-decoration:none}
+.ai-notice-a:hover{text-decoration:underline}
+.ai-notice-btn{background:#0e639c;border:0;color:#fff;font-size:10px;font-weight:600;padding:3px 8px;border-radius:3px;cursor:pointer}
+.ai-notice-btn:hover{background:#1177bb}
