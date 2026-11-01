@@ -259,17 +259,46 @@ function addChatMessage(role, text) {
   list.append(div);
   list.scrollTop = list.scrollHeight;
 }
+function applyAIContent(path, content) {
+  const tab = state.tabs.get(path);
+  if (!tab || !tab.model) return;
+  tab.model.setValue(content);
+  tab.dirty = false;
+  if (state.activePath === path) renderTabs();
+}
 async function chatSend(text) {
   addChatMessage('user', text);
-  const history = (state.chatHistory || []).slice(-20);
-  history.push({ role: 'user', content: text });
-  state.chatHistory = history;
+  const active = state.activePath;
+  let activeContent = null, selectionText = null, cursorLine = null;
+  const tab = active ? state.tabs.get(active) : null;
+  if (tab && tab.model) {
+    activeContent = tab.model.getValue();
+    const sel = state.editor.getSelection();
+    if (sel && !sel.isEmpty()) selectionText = tab.model.getValueInRange(sel);
+    const pos = state.editor.getPosition();
+    if (pos) cursorLine = pos.lineNumber;
+  }
+  let files = [];
+  try { const data = await api('/api/files?path=.'); files = data.entries.map((e) => e.path); } catch {}
+  let problems = [];
+  try { problems = state.monaco.editor.getModelMarkers({}).map((m) => ({ line: m.startLineNumber, col: m.startColumn, message: m.message })); } catch {}
+  const term = $('terminal-output');
+  const terminalTail = term ? term.innerText.slice(-2000) : '';
   try {
-    const result = await api('/api/ai/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history }),
+    const result = await api('/api/ai/agent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: text, context: { activeFile: active, activeContent, selection: selectionText, cursorLine, files, problems, terminalTail } }),
     });
-    state.chatHistory.push({ role: 'assistant', content: result.content });
-    addChatMessage('assistant', result.content);
+    const touched = [...new Set([...(result.applied || []), ...(result.created || []), ...(result.deleted || [])])];
+    for (const tp of touched) {
+      if (tp === active && state.tabs.has(tp)) {
+        try { const d = await api('/api/file?path=' + encodeURIComponent(tp)); applyAIContent(tp, d.content); } catch {}
+      }
+    }
+    if (touched.length) await refreshFiles();
+    const fresh = result.created || [];
+    if (fresh.length && !active) { try { await openFile(fresh[0]); } catch {} }
+    addChatMessage('assistant', result.report || 'Done.');
   } catch (error) { addChatMessage('system', error.message); }
 }
 function showAiPane() {
@@ -284,13 +313,15 @@ function showAiPane() {
   const row = document.createElement('div'); row.className = 'ai-input-row';
   const input = document.createElement('input'); input.id = 'ai-input'; input.placeholder = 'Ask about your code…'; input.autocomplete = 'off';
   const sendBtn = document.createElement('button'); sendBtn.className = 'primary'; sendBtn.textContent = 'Send';
+  const fixBtn = document.createElement('button'); fixBtn.className = 'run-btn primary'; fixBtn.textContent = 'Fix Active File';
+  fixBtn.addEventListener('click', () => { const f = state.activePath; if (!f) { notify('Open a file first.'); return; } chatSend('Fix the active file: ' + f); });
   const explainBtn = document.createElement('button'); explainBtn.className = 'run-btn'; explainBtn.textContent = 'Explain last error';
   const doSend = () => { const v = input.value.trim(); if (!v) return; input.value = ''; chatSend(v); };
   sendBtn.addEventListener('click', doSend);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
   explainBtn.addEventListener('click', explainLastError);
   row.append(input, sendBtn);
-  wrap.append(status, list, row, explainBtn);
+  wrap.append(status, list, row, fixBtn, explainBtn);
   sideContent.append(wrap);
 }
 async function showSourcePane() {

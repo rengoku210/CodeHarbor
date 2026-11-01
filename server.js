@@ -536,9 +536,157 @@ a:hover{background:#1177bb}
     });
   });
 
+  // ---- AI Agent: workspace file editing (restricted to WORKSPACE) ----
+  function aiResolve(rawPath) {
+    if (typeof rawPath !== 'string' || !rawPath.trim()) throw new Error('Path is required.');
+    const target = resolveWorkspacePath(rawPath.trim());
+    if (target === WORKSPACE) throw new Error('Cannot target the workspace root.');
+    return target;
+  }
+  function aiListFiles(folderPath) {
+    const dir = folderPath ? aiResolve(folderPath) : WORKSPACE;
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error('Folder not found: ' + folderPath);
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).map((d) => ({
+      name: d.name,
+      type: d.isDirectory() ? 'folder' : 'file',
+      path: toWorkspaceRelative(path.join(dir, d.name)),
+    }));
+    return { entries };
+  }
+  function aiReadFile(filePath) {
+    const target = aiResolve(filePath);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error('File not found: ' + filePath);
+    const stat = fs.statSync(target);
+    if (stat.size > 262144) throw new Error('File too large to read via AI (' + stat.size + ' bytes).');
+    return { content: fs.readFileSync(target, 'utf8') };
+  }
+  function aiWriteFile(filePath, content) {
+    const target = aiResolve(filePath);
+    if (typeof content !== 'string') throw new Error('content must be a string.');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content, 'utf8');
+    return { ok: true, path: toWorkspaceRelative(target), bytes: Buffer.byteLength(content, 'utf8') };
+  }
+  function aiPatchFile(filePath, edits) {
+    const target = aiResolve(filePath);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error('File not found: ' + filePath);
+    if (!Array.isArray(edits) || edits.length === 0) throw new Error('edits must be a non-empty array.');
+    const lines = fs.readFileSync(target, 'utf8').split('\n');
+    const normal = edits.map((e) => ({
+      action: e.action,
+      startLine: Number(e.startLine) || 1,
+      endLine: Number(e.endLine) || (Number(e.startLine) || 1),
+      text: typeof e.text === 'string' ? e.text : '',
+    })).sort((a, b) => b.startLine - a.startLine);
+    for (const e of normal) {
+      const s = Math.max(1, e.startLine);
+      const en = Math.max(s, e.endLine);
+      if (s > lines.length + 1) throw new Error('Edit startLine out of range: ' + s);
+      if (e.action === 'replace') {
+        lines.splice(s - 1, en - s + 1, ...e.text.split('\n'));
+      } else if (e.action === 'insert') {
+        lines.splice(s - 1, 0, ...e.text.split('\n'));
+      } else if (e.action === 'delete') {
+        lines.splice(s - 1, en - s + 1);
+      } else {
+        throw new Error('Unknown edit action: ' + e.action);
+      }
+    }
+    fs.writeFileSync(target, lines.join('\n'), 'utf8');
+    return { ok: true, path: toWorkspaceRelative(target) };
+  }
+  function aiDeleteFile(filePath) {
+    const target = aiResolve(filePath);
+    if (!fs.existsSync(target)) throw new Error('Not found: ' + filePath);
+    fs.rmSync(target, { recursive: true, force: false });
+    return { ok: true, path: toWorkspaceRelative(target) };
+  }
+  function aiRenameFile(from, to) {
+    const src = aiResolve(from);
+    const dest = aiResolve(to);
+    if (!fs.existsSync(src)) throw new Error('Not found: ' + from);
+    if (fs.existsSync(dest)) throw new Error('Destination already exists: ' + to);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.renameSync(src, dest);
+    return { ok: true, path: toWorkspaceRelative(dest) };
+  }
+  function executeAiTool(action) {
+    switch (action.tool) {
+      case 'list_files': return aiListFiles(action.path);
+      case 'read_file': return aiReadFile(action.path);
+      case 'write_file': return aiWriteFile(action.path, action.content);
+      case 'patch_file': return aiPatchFile(action.path, action.edits);
+      case 'delete_file': return aiDeleteFile(action.path);
+      case 'rename_file': return aiRenameFile(action.from, action.to);
+      default: throw new Error('Unknown tool: ' + action.tool);
+    }
+  }
+
   // Serve workspace files for the Preview panel (path-safe, proper MIME types).
   // Must be mounted before the catch-all proxy to code-server.
   app.use('/preview', express.static(WORKSPACE, { index: false }));
+
+  const AI_TOOL_SYSTEM =
+    'You are the CodeHarbor AI coding agent. You can inspect and modify files inside the workspace.\n' +
+    'When asked to create, fix, modify, or improve code, USE A TOOL instead of dumping code into the chat.\n' +
+    'Available tools. Always answer with ONLY a JSON object (no prose, no markdown fences) of one of these forms:\n' +
+    '{"tool":"list_files","path":"<dir or empty>"}\n' +
+    '{"tool":"read_file","path":"<file>"}\n' +
+    '{"tool":"write_file","path":"<file>","content":"<full new content>"}\n' +
+    '{"tool":"patch_file","path":"<file>","edits":[{"action":"replace|insert|delete","startLine":N,"endLine":N,"text":"<text>"}]}\n' +
+    '{"tool":"delete_file","path":"<file>"}\n' +
+    '{"tool":"rename_file","from":"<file>","to":"<file>"}\n' +
+    'Edits: replace swaps lines startLine..endLine with text; insert puts text before startLine; delete removes lines startLine..endLine.\n' +
+    'Paths are workspace-relative (e.g. "src/app.js"). After finishing all tool calls, respond with a final summary (plain text): ' +
+    'what you changed and why, in 2-4 short sentences. If the user asked for an explanation or question, just answer directly without tools.';
+
+  app.post('/api/ai/agent', async (req, res) => {
+    if (!AI_KEY) return res.status(500).json({ error: 'AI is not configured (missing INCEPTION_API_KEY in .env).' });
+    const { goal, context } = req.body || {};
+    if (!goal || typeof goal !== 'string') return res.status(400).json({ error: 'goal is required.' });
+    const cx = (typeof context === 'object' && context) || {};
+    const applied = [], created = [], deleted = [];
+    const messages = [{ role: 'system', content: AI_TOOL_SYSTEM }];
+    const contextParts = [];
+    if (cx.activeFile) contextParts.push('Active file: ' + cx.activeFile);
+    if (typeof cx.activeContent === 'string') contextParts.push('Active file contents (current editor buffer):\n' + cx.activeContent.slice(0, 12000));
+    if (cx.selection) contextParts.push('Selection in active file:\n' + String(cx.selection).slice(0, 4000));
+    if (cx.cursorLine) contextParts.push('Cursor line: ' + cx.cursorLine);
+    if (Array.isArray(cx.files) && cx.files.length) contextParts.push('Workspace top-level entries: ' + cx.files.join(', '));
+    if (Array.isArray(cx.problems) && cx.problems.length) {
+      contextParts.push('Current problems/diagnostics:\n' + cx.problems.slice(0, 30).map((p) => `[${p.line}:${p.col}] ${p.message}`).join('\n'));
+    }
+    if (cx.terminalTail) contextParts.push('Recent terminal output:\n' + String(cx.terminalTail).slice(-2000));
+    messages.push({ role: 'user', content: contextParts.join('\n\n') + '\n\nUser request: ' + goal });
+
+    let report = '', finalText = '';
+    for (let round = 0; round < 6; round++) {
+      const result = await askAI(messages);
+      if (result.error) {
+        if (!report) return res.status(502).json({ error: result.error });
+        break;
+      }
+      const text = result.content.trim();
+      finalText = text;
+      let action = null;
+      const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const candidate = fence ? fence[1] : text;
+      try { action = JSON.parse(candidate); } catch {}
+      if (!action || typeof action.tool !== 'string') { report = text; break; }
+      try {
+        const toolResult = executeAiTool(action);
+        if (action.tool === 'write_file') created.push(action.path);
+        else if (action.tool === 'delete_file') deleted.push(action.path);
+        else if (action.tool === 'patch_file' || action.tool === 'rename_file') applied.push(action.path || toolResult.path);
+        messages.push({ role: 'assistant', content: candidate });
+        messages.push({ role: 'user', content: 'TOOL RESULT (JSON):\n' + JSON.stringify(toolResult) });
+      } catch (err) {
+        messages.push({ role: 'assistant', content: candidate });
+        messages.push({ role: 'user', content: 'TOOL ERROR: ' + err.message + ' Please correct the request and try again, or respond with a final summary.' });
+      }
+    }
+    return res.json({ report: report || finalText, applied, created, deleted });
+  });
 
   // health endpoint
   app.get('/codeharbor/health', (req, res) => {
