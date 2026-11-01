@@ -395,12 +395,49 @@ async function runCommand(command) {
   catch (error) { output.insertAdjacentText('beforeend', `${error.message}\n`); }
   output.scrollTop = output.scrollHeight;
 }
+function quickOpenScore(query, text) {
+  if (!query) return 0;
+  let score = 0, qi = 0;
+  const q = query.toLowerCase(), t = text.toLowerCase();
+  for (let i = 0; i < t.length && qi < q.length; i++) {
+    if (t[i] === q[qi]) { score += 10 + qi * 2; qi++; }
+  }
+  if (qi < q.length) return -1;
+  if (t.startsWith(q)) score += 50;
+  return score;
+}
+function renderQuickOpen(files, dialog, input, results) {
+  let ranked = [];
+  let idx = 0;
+  function draw() {
+    const query = input.value.trim();
+    ranked = files.map(function (f) { return { f: f, s: quickOpenScore(query, f.path) }; })
+      .filter(function (x) { return x.s >= 0; }).sort(function (a, b) { return b.s - a.s; }).slice(0, 30).map(function (x) { return x.f; });
+    if (!ranked.length) { results.innerHTML = '<div class="empty-tree">No matching files.</div>'; return; }
+    results.innerHTML = ranked.map(function (file, i) {
+      return '<div class="quick-result' + (i === idx ? ' active' : '') + '" data-path="' + escapeText(file.path) + '"><span class="tree-icon">' + escapeText(iconFor(file)) + '</span><span class="quick-name">' + escapeText(file.path) + '</span></div>';
+    }).join('');
+    results.querySelectorAll('.quick-result').forEach(function (row, i) {
+      row.addEventListener('click', function () { dialog.close(); openFile(ranked[i].path); });
+    });
+    const active = results.querySelector('.quick-result.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+  input.onkeydown = function (e) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); idx = Math.min(idx + 1, ranked.length - 1); draw(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); idx = Math.max(idx - 1, 0); draw(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (ranked[idx]) { dialog.close(); openFile(ranked[idx].path); } }
+    else if (e.key === 'Escape') { dialog.close(); }
+  };
+  input.oninput = function () { idx = 0; draw(); };
+  draw();
+}
 async function openQuickOpen() {
   try {
     const files = [];
     async function walk(directory = '') { for (const entry of await listDirectory(directory)) { if (entry.type === 'folder') await walk(entry.path); else files.push(entry); } }
     await walk(); const dialog = $('quick-open-dialog'); const input = $('quick-open-input'); const results = $('quick-open-results'); input.value = '';
-    function update() { const query = input.value.toLowerCase(); const filtered = files.filter((file) => file.path.toLowerCase().includes(query)).slice(0, 30); results.innerHTML = filtered.map((file) => `<div class="quick-result" data-path="${escapeText(file.path)}">${escapeText(file.path)}</div>`).join('') || '<div class="empty-tree">No matching files.</div>'; results.querySelectorAll('.quick-result').forEach((row) => row.addEventListener('click', () => { dialog.close(); openFile(row.dataset.path); })); }
+    renderQuickOpen(files, dialog, input, results);
     input.oninput = update; update(); dialog.showModal(); input.focus();
   } catch (error) { notify(error.message); }
 }
@@ -444,9 +481,9 @@ function showMenu(name, button) {
   const actions = {
     File: [['New File', () => openCreate('file')], ['New Folder', () => openCreate('folder')], ['Quick Open…', openQuickOpen], ['Save', saveActive]],
     Edit: [['Undo', () => state.editor.trigger('menu', 'undo')], ['Redo', () => state.editor.trigger('menu', 'redo')], ['Find', () => state.editor.trigger('menu', 'actions.find')]],
-    Selection: [['Select All', () => state.editor.trigger('menu', 'editor.action.selectAll')]],
+    Selection: [['Select All', () => state.editor.trigger('menu', 'editor.action.selectAll')], ['Expand Selection', () => state.editor.trigger('menu', 'editor.action.smartSelect.expand')], ['Shrink Selection', () => state.editor.trigger('menu', 'editor.action.smartSelect.shrink')], ['Add Cursor Above', () => state.editor.trigger('menu', 'editor.action.insertCursorAbove')], ['Add Cursor Below', () => state.editor.trigger('menu', 'editor.action.insertCursorBelow')], ['Select Line', () => state.editor.trigger('menu', 'expandLineSelection')]],
     View: [['Explorer', () => setView('explorer')], ['Search', () => setView('search')], ['Toggle Terminal', toggleTerminal]],
-    Go: [['Quick Open…', openQuickOpen]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
+    Go: [['Go to File…', openQuickOpen], ['Go to Line…', () => state.editor.trigger('menu', 'editor.action.gotoLine')], ['Go to Symbol…', () => state.editor.trigger('menu', 'editor.action.quickOutline')], ['Go to Definition', () => state.editor.trigger('menu', 'editor.action.revealDefinition')], ['Next Problem', () => state.editor.trigger('menu', 'editor.action.marker.next')], ['Previous Problem', () => state.editor.trigger('menu', 'editor.action.marker.prev')]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Terminal: [['New Terminal', () => toggleTerminal(true)], ['Run Command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Help: [['About CodeHarbor', () => notify('CodeHarbor local editor')]],
   };
@@ -600,6 +637,66 @@ async function startInlineRename(entry) {
 document.addEventListener('click', (event) => { if (ctxMenuEl && !ctxMenuEl.contains(event.target)) closeCtxMenu(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeCtxMenu(); });
 window.addEventListener('blur', closeCtxMenu);
+function registerHtmlSnippets(monaco) {
+  const snippets = [
+    { label: '!', detail: 'HTML5 boilerplate', insertText: '<!DOCTYPE html>\n<html lang="en">\n<head>\n\t<meta charset="UTF-8">\n\t<meta name="viewport" content="width=device-width, initial-scale=1.0">\n\t<title>Document</title>\n</head>\n<body>\n\t$0\n</body>\n</html>' },
+    { label: 'html:5', detail: 'HTML5 boilerplate', insertText: '<!DOCTYPE html>\n<html lang="en">\n<head>\n\t<meta charset="UTF-8">\n\t<meta name="viewport" content="width=device-width, initial-scale=1.0">\n\t<title>Document</title>\n</head>\n<body>\n\t$0\n</body>\n</html>' },
+    { label: 'link:css', detail: 'Stylesheet link', insertText: '<link rel="stylesheet" href="$1">' },
+    { label: 'script:src', detail: 'External script', insertText: '<script src="$1"></script>' },
+    { label: 'img', detail: 'Image element', insertText: '<img src="$1" alt="$2">' },
+    { label: 'a', detail: 'Anchor link', insertText: '<a href="$1">$2</a>' },
+    { label: 'ul', detail: 'Unordered list', insertText: '<ul>\n\t<li>$1</li>\n</ul>' },
+    { label: 'ol', detail: 'Ordered list', insertText: '<ol>\n\t<li>$1</li>\n</ol>' },
+    { label: 'div', detail: 'Div container', insertText: '<div>$1</div>' },
+    { label: 'section', detail: 'Section', insertText: '<section>$1</section>' },
+  ];
+  monaco.languages.registerCompletionItemProvider('html', {
+    provideCompletionItems: function (model, position) {
+      const word = model.getWordUntilPosition(position);
+      const prefix = word.word || '';
+      const suggestions = [];
+      for (const s of snippets) {
+        if (!prefix || s.label.indexOf(prefix) === 0) {
+          suggestions.push({
+            label: s.label,
+            kind: monaco.languages.CompletionItemKind.Snippet,
+            insertText: s.insertText,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            detail: s.detail,
+            range: { startLineNumber: position.lineNumber, startColumn: word.startColumn, endLineNumber: position.lineNumber, endColumn: position.column },
+          });
+        }
+      }
+      return { suggestions: suggestions };
+    },
+  });
+}
+function setupHtmlAutoClose(monaco) {
+  state.editor.onDidType(function () {
+    const model = state.editor.getModel();
+    if (!model) return;
+    const uri = model.uri && model.uri.path ? model.uri.path : '';
+    if (!/\.html?$/i.test(uri)) return;
+    const pos = state.editor.getPosition();
+    if (!pos) return;
+    const line = model.getLineContent(pos.lineNumber);
+    if (pos.column < 2) return;
+    if (line[pos.column - 2] !== '>') return;
+    const before = line.slice(0, pos.column - 1);
+    const m = before.match(/<([a-zA-Z][a-zA-Z0-9-]*)((?:\s[^<>]*?)?)>$/);
+    if (!m) return;
+    const tag = m[1];
+    if (/^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag)) return;
+    if (before.replace(/\s+$/, '').endsWith('/>')) return;
+    const after = line.slice(pos.column - 1);
+    if (after.trimStart().indexOf('</' + tag + '>') === 0) return;
+    state.editor.executeEdits('codeharbor-auto-close', [{
+      range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+      text: '</' + tag + '>',
+    }]);
+    state.editor.setPosition(new monaco.Position(pos.lineNumber, pos.column));
+  });
+}
 function initMonaco() {
   window.MonacoEnvironment = {
     getWorkerUrl: function (_moduleId, label) {
@@ -613,11 +710,16 @@ function initMonaco() {
   window.require.config({ paths: { vs: '/monaco/vs' } });
   window.require(['vs/editor/editor.main'], (monaco) => {
     state.monaco = monaco;
-    state.editor = monaco.editor.create($('editor'), { value: '', language: 'plaintext', theme: 'vs-dark', automaticLayout: true, minimap: { enabled: true }, fontFamily: 'Consolas, "Cascadia Code", monospace', fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'off' });
+    state.editor = monaco.editor.create($('editor'), { value: '', language: 'plaintext', theme: 'vs-dark', automaticLayout: true, minimap: { enabled: true }, fontFamily: 'Consolas, "Cascadia Code", monospace', fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'off', tabCompletion: 'on' });
     state.editor.onDidChangeCursorPosition(updateCursorStatus);
     state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveActive);
     state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, openQuickOpen);
     state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, () => toggleTerminal());
+    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG, () => state.editor.trigger('menu', 'editor.action.gotoLine'));
+    state.editor.addCommand(monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.next'));
+    state.editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.prev'));
+    registerHtmlSnippets(monaco);
+    setupHtmlAutoClose(monaco);
   }, (error) => notify(`Editor failed to load: ${error.message || error}`));
 }
 
