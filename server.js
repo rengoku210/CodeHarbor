@@ -1,4 +1,5 @@
 const express = require('express');
+const { WebSocketServer } = require('ws');
 const { spawn, execSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -461,8 +462,44 @@ a:hover{background:#1177bb}
     });
   });
 
-  // WebSocket upgrade — critical for terminal, extensions, remote connection
+  // local terminal WebSocket — persistent PowerShell session in the workspace
+  const terminalWss = new WebSocketServer({ noServer: true });
+  terminalWss.on('connection', (ws) => {
+    let proc = null;
+    const startShell = () => {
+      try {
+        proc = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass'], {
+          cwd: WORKSPACE,
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        proc.stdout.on('data', (d) => ws.send(JSON.stringify({ type: 'output', data: d.toString() })));
+        proc.stderr.on('data', (d) => ws.send(JSON.stringify({ type: 'output', data: d.toString() })));
+        proc.on('error', (err) => ws.send(JSON.stringify({ type: 'output', data: `\r\n[terminal] ${err.message}\r\n` })));
+        proc.on('close', (code) => ws.send(JSON.stringify({ type: 'exit', code })));
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'output', data: `\r\n[terminal] failed to start: ${err.message}\r\n` }));
+      }
+    };
+    startShell();
+    ws.on('message', (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw); } catch { return; }
+      if (msg.type === 'input' && typeof msg.data === 'string') {
+        if (proc) proc.stdin.write(msg.data);
+      } else if (msg.type === 'kill') {
+        try { if (proc) proc.kill(); } catch {}
+      }
+    });
+    ws.on('close', () => { try { if (proc) proc.kill(); } catch {} });
+  });
+
+  // WebSocket upgrade — terminal first, otherwise proxy to code-server
   server.on('upgrade', (req, socket, head) => {
+    if (req.url && req.url.startsWith('/api/terminal')) {
+      terminalWss.handleUpgrade(req, socket, head, (ws) => terminalWss.emit('connection', ws, req));
+      return;
+    }
     const proxySocket = net.connect(CS_PORT, '127.0.0.1', () => {
       const reqLine = `${req.method} ${req.url} HTTP/1.1\r\n`;
       const headers = Object.entries(req.headers)
