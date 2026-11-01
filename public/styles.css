@@ -4,3 +4,4 @@
 @media(max-width:700px){.app-shell{min-width:360px}.menus button:nth-child(n+5){display:none}.side-panel{width:190px;min-width:160px}.status-right span:nth-child(2),.status-right span:nth-child(3){display:none}.welcome-shortcuts{flex-direction:column;gap:7px}}
 .ctx-menu{position:fixed;z-index:1000;min-width:185px;background:#252526;border:1px solid #454545;border-radius:4px;padding:4px 0;box-shadow:0 4px 14px rgba(0,0,0,.45);user-select:none}.ctx-item{display:block;width:100%;text-align:left;background:none;border:0;color:#ccc;padding:6px 14px;font:inherit;cursor:pointer;white-space:nowrap}.ctx-item:hover{background:#094771;color:#fff}.ctx-item.danger:hover{background:#7a1f1f;color:#fff}.ctx-sep{height:1px;background:#3c3c3c;margin:4px 8px}
 .rename-input{width:100%;background:#3c3c3c;border:1px solid #007acc;color:#eee;font:inherit;padding:2px 4px;outline:none}
+.terminal-label.connected{color:#72c690}

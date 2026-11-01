@@ -229,6 +229,41 @@ async function openQuickOpen() {
     input.oninput = update; update(); dialog.showModal(); input.focus();
   } catch (error) { notify(error.message); }
 }
+const ANSI_RE = /\x1B\[[0-9;?]*[ -/]*[@-~]/g;
+function terminalAppend(text) {
+  const output = $('terminal-output');
+  output.insertAdjacentText('beforeend', text.replace(ANSI_RE, ''));
+  output.scrollTop = output.scrollHeight;
+}
+function initTerminal() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  try { state.termWs = new WebSocket(`${proto}://${location.host}/api/terminal`); } catch { return; }
+  state.termWs.onopen = () => {
+    state.termConnected = true;
+    const label = document.querySelector('.terminal-label');
+    if (label) label.classList.add('connected');
+    terminalAppend('\r\n[terminal] connected\r\n');
+  };
+  state.termWs.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
+    if (msg.type === 'output') terminalAppend(msg.data);
+  };
+  state.termWs.onclose = () => {
+    state.termConnected = false;
+    const label = document.querySelector('.terminal-label');
+    if (label) label.classList.remove('connected');
+  };
+  state.termWs.onerror = () => {};
+}
+async function sendTerminalCommand(command) {
+  if (state.termConnected && state.termWs && state.termWs.readyState === 1) {
+    terminalAppend(`\r\nPS workspace> ${command}\r\n`);
+    state.termWs.send(JSON.stringify({ type: 'input', data: command + '\r\n' }));
+    return;
+  }
+  await runCommand(command);
+}
 function toggleTerminal(force) { const panel = $('bottom-panel'); const shouldOpen = force ?? panel.classList.contains('hidden'); panel.classList.toggle('hidden', !shouldOpen); if (shouldOpen) $('terminal-command').focus(); }
 function showMenu(name, button) {
   const actions = {
@@ -426,11 +461,12 @@ $('close-panel').addEventListener('click', () => toggleTerminal(false));
 $('toggle-terminal').addEventListener('click', () => toggleTerminal());
 $('status-terminal').addEventListener('click', () => toggleTerminal());
 $('toggle-sidebar').addEventListener('click', () => $('side-panel').classList.toggle('hidden'));
-$('terminal-form').addEventListener('submit', async (event) => { event.preventDefault(); const input = $('terminal-command'); const command = input.value.trim(); if (!command) return; input.value = ''; await runCommand(command); });
+$('terminal-form').addEventListener('submit', async (event) => { event.preventDefault(); const input = $('terminal-command'); const command = input.value.trim(); if (!command) return; input.value = ''; await sendTerminalCommand(command); });
 document.querySelectorAll('.panel-tab').forEach((tab) => tab.addEventListener('click', () => { document.querySelectorAll('.panel-tab').forEach((item) => item.classList.toggle('active', item === tab)); state.activePanel = tab.dataset.panel; $('terminal-view').classList.toggle('hidden', state.activePanel !== 'terminal'); $('panel-empty').classList.toggle('hidden', state.activePanel === 'terminal'); if (state.activePanel !== 'terminal') $('panel-empty').textContent = state.activePanel === 'problems' ? 'No problems detected.' : state.activePanel === 'output' ? 'No output yet.' : 'Debug console is idle.'; }));
 document.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveActive(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); openQuickOpen(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') { event.preventDefault(); toggleTerminal(); } if (event.key === 'Escape') $('menu-popover').classList.add('hidden'); });
 initMonaco();
 refreshFiles();
+initTerminal();
 api('/api/git').then((git) => {
   $('git-status').innerHTML = `⑂ <span>${escapeText(git.repository ? git.branch || 'Detached HEAD' : 'No Git')}</span>`;
   $('git-status').title = git.repository ? `${git.changes} changed files` : 'No Git repository in this workspace';
