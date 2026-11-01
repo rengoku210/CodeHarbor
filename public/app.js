@@ -148,7 +148,7 @@ function closeTab(filePath) {
 async function saveActive() {
   if (!state.activePath) return;
   const tab = state.tabs.get(state.activePath); if (!tab || tab.readOnly) return;
-  try { await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: state.activePath, content: tab.model.getValue() }) }); tab.dirty = false; renderTabs(); showStatus('Saved'); }
+  try { await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: state.activePath, content: tab.model.getValue() }) }); tab.dirty = false; renderTabs(); showStatus('Saved'); if (state.previewPath === state.activePath) reloadPreview(); }
   catch (error) { notify(error.message); }
 }
 function updateCursorStatus() { const position = state.editor.getPosition(); if (position) $('cursor-status').textContent = `Ln ${position.lineNumber}, Col ${position.column}`; }
@@ -363,6 +363,86 @@ async function openDiffTab(filePath) {
   } catch (error) { notify(error.message); }
 }
 
+function openPreview(path) {
+  state.previewPath = path;
+  const panel = $('preview-panel');
+  const url = '/preview/' + encodeURIComponent(path).replace(/%2F/g, '/');
+  $('preview-url').value = url;
+  $('preview-frame').src = url + '?v=' + Date.now();
+  $('preview-status').textContent = '● Running';
+  panel.classList.remove('hidden');
+}
+function reloadPreview() {
+  if (!state.previewPath) return;
+  const url = '/preview/' + encodeURIComponent(state.previewPath).replace(/%2F/g, '/') + '?v=' + Date.now();
+  $('preview-frame').src = url;
+}
+function closePreview() {
+  state.previewPath = null;
+  $('preview-panel').classList.add('hidden');
+  $('preview-frame').src = 'about:blank';
+}
+async function findHtmlEntry(startPath) {
+  const dir = startPath ? startPath.split('/').slice(0, -1).join('/') : '';
+  for (const candidate of [dir, '']) {
+    try {
+      const data = await api('/api/files?path=' + encodeURIComponent(candidate || '.'));
+      const html = data.entries.filter(function (e) { return /\.html?$/i.test(e.name); }).sort(function (a, b) {
+        if (a.name === 'index.html') return -1;
+        if (b.name === 'index.html') return 1;
+        return a.name.localeCompare(b.name);
+      });
+      if (html.length) return html[0].path;
+    } catch {}
+  }
+  return null;
+}
+async function runProject() {
+  const active = state.activePath;
+  if (!active) {
+    const idx = await findHtmlEntry('');
+    if (idx) { await openFile(idx); openPreview(idx); showStatus('Preview started'); return; }
+    notify('Open a file first, then press Run.');
+    return;
+  }
+  const ext = extensionOf(active);
+  if (ext === 'html' || ext === 'htm') {
+    if (state.tabs.get(active) && state.tabs.get(active).dirty) await saveActive();
+    openPreview(active);
+    showStatus('Preview started');
+    return;
+  }
+  if (ext === 'css' || ext === 'scss') {
+    const html = await findHtmlEntry(active);
+    if (html) {
+      if (state.tabs.get(html) && state.tabs.get(html).dirty) await saveActive();
+      openPreview(html);
+      showStatus('Previewing with ' + html.split('/').pop());
+    } else {
+      notify('No HTML file found to preview this CSS. Open the HTML file instead and press Run.');
+    }
+    return;
+  }
+  if (ext === 'js' || ext === 'mjs' || ext === 'cjs') {
+    try {
+      const pkg = await api('/api/file?path=package.json');
+      const scripts = JSON.parse(pkg.content).scripts || {};
+      for (const name of ['dev', 'start', 'serve']) {
+        if (scripts[name]) {
+          toggleTerminal(true);
+          sendTerminalCommand('npm run ' + name);
+          showStatus('Started "npm run ' + name + '" in terminal');
+          return;
+        }
+      }
+    } catch {}
+    toggleTerminal(true);
+    sendTerminalCommand('node "' + active + '"');
+    showStatus('Running ' + active + ' via node');
+    return;
+  }
+  notify('Run is not supported for .' + ext + ' files yet.');
+}
 async function setView(view) {
   state.activeView = view;
   document.querySelectorAll('.activity').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
@@ -718,6 +798,7 @@ function initMonaco() {
     state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG, () => state.editor.trigger('menu', 'editor.action.gotoLine'));
     state.editor.addCommand(monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.next'));
     state.editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.prev'));
+    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, runProject);
     registerHtmlSnippets(monaco);
     setupHtmlAutoClose(monaco);
   }, (error) => notify(`Editor failed to load: ${error.message || error}`));
@@ -737,10 +818,14 @@ $('cancel-create').addEventListener('click', () => createDialog.close());
 $('close-panel').addEventListener('click', () => toggleTerminal(false));
 $('toggle-terminal').addEventListener('click', () => toggleTerminal());
 $('status-terminal').addEventListener('click', () => toggleTerminal());
+$('run-button').addEventListener('click', runProject);
+$('preview-refresh').addEventListener('click', reloadPreview);
+$('preview-open').addEventListener('click', () => { if (state.previewPath) window.open('/preview/' + encodeURIComponent(state.previewPath).replace(/%2F/g, '/'), '_blank'); });
+$('preview-close').addEventListener('click', closePreview);
 $('toggle-sidebar').addEventListener('click', () => $('side-panel').classList.toggle('hidden'));
 $('terminal-form').addEventListener('submit', async (event) => { event.preventDefault(); const input = $('terminal-command'); const command = input.value.trim(); if (!command) return; input.value = ''; await sendTerminalCommand(command); });
 document.querySelectorAll('.panel-tab').forEach((tab) => tab.addEventListener('click', () => { document.querySelectorAll('.panel-tab').forEach((item) => item.classList.toggle('active', item === tab)); state.activePanel = tab.dataset.panel; $('terminal-view').classList.toggle('hidden', state.activePanel !== 'terminal'); $('panel-empty').classList.toggle('hidden', state.activePanel === 'terminal'); if (state.activePanel !== 'terminal') $('panel-empty').textContent = state.activePanel === 'problems' ? 'No problems detected.' : state.activePanel === 'output' ? 'No output yet.' : 'Debug console is idle.'; }));
-document.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveActive(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); openQuickOpen(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') { event.preventDefault(); toggleTerminal(); } if (event.key === 'Escape') $('menu-popover').classList.add('hidden'); });
+document.addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveActive(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); openQuickOpen(); } if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') { event.preventDefault(); toggleTerminal(); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); runProject(); } if (event.key === 'Escape') $('menu-popover').classList.add('hidden'); });
 initMonaco();
 refreshFiles();
 initTerminal();

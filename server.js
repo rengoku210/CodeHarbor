@@ -536,6 +536,10 @@ a:hover{background:#1177bb}
     });
   });
 
+  // Serve workspace files for the Preview panel (path-safe, proper MIME types).
+  // Must be mounted before the catch-all proxy to code-server.
+  app.use('/preview', express.static(WORKSPACE, { index: false }));
+
   // health endpoint
   app.get('/codeharbor/health', (req, res) => {
     res.json({ status: 'ok', codeServer: csProcess ? 'running' : 'stopped', workspace: WORKSPACE });

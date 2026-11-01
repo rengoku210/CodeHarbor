@@ -15,7 +15,7 @@
         <button data-menu="File">File</button><button data-menu="Edit">Edit</button><button data-menu="Selection">Selection</button><button data-menu="View">View</button><button data-menu="Go">Go</button><button data-menu="Run">Run</button><button data-menu="Terminal">Terminal</button><button data-menu="Help">Help</button>
       </nav>
       <div class="title-center"><span class="tiny-dot"></span><span>CodeHarbor</span><span class="title-separator">—</span><span id="active-title">No file open</span></div>
-      <div class="title-actions"><button id="toggle-terminal" title="Toggle terminal (Ctrl+J)">▁</button><button id="toggle-sidebar" title="Toggle Explorer (Ctrl+B)">◫</button></div>
+      <div class="title-actions"><button id="run-button" class="run-green" title="Run / Preview (Ctrl+Enter)">▶ Run</button><button id="toggle-terminal" title="Toggle terminal (Ctrl+J)">▁</button><button id="toggle-sidebar" title="Toggle Explorer (Ctrl+B)">◫</button></div>
     </header>
 
     <div id="menu-popover" class="menu-popover hidden"></div>
@@ -48,6 +48,16 @@
             <div class="welcome-shortcuts"><span><kbd>Ctrl</kbd> <kbd>S</kbd> Save</span><span><kbd>Ctrl</kbd> <kbd>P</kbd> Quick open</span><span><kbd>Ctrl</kbd> <kbd>J</kbd> Terminal</span></div>
           </div>
           <div class="minimap-decoration" aria-hidden="true"></div>
+        </div>
+        <div id="preview-panel" class="preview-panel hidden">
+          <div class="preview-head">
+            <span class="preview-status" id="preview-status">Preview</span>
+            <input id="preview-url" readonly aria-label="Preview URL">
+            <button id="preview-refresh" title="Refresh preview">⟳</button>
+            <button id="preview-open" title="Open in new tab">⧉</button>
+            <button id="preview-close" title="Close preview">×</button>
+          </div>
+          <iframe id="preview-frame" title="Preview"></iframe>
         </div>
         <div class="panel" id="bottom-panel">
           <div class="panel-tabs"><button class="panel-tab active" data-panel="terminal">TERMINAL</button><button class="panel-tab" data-panel="problems">PROBLEMS</button><button class="panel-tab" data-panel="output">OUTPUT</button><button class="panel-tab" data-panel="debug">DEBUG CONSOLE</button><button id="close-panel" class="panel-close" title="Close panel">×</button></div>
