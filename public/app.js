@@ -1,7 +1,8 @@
 const state = {
   files: [], expanded: new Set(['']), directoryCache: new Map(), tabs: new Map(),
   activePath: null, selectedPath: '', createKind: 'file', activeView: 'explorer',
-  activePanel: 'terminal', monaco: null, editor: null, models: new Map(), chatHistory: [], debugLines: [], termWs: null, termConnected: false,
+  activePanel: 'terminal', monaco: null, editor: null, models: new Map(), chatHistory: [], chatMessages: [], debugLines: [], termWs: null, termConnected: false,
+  layout: { ai: 'left', dockW: 340, bottomH: 180 }, zoom: 100,
 };
 const $ = (id) => document.getElementById(id);
 const sideContent = $('side-content');
@@ -251,6 +252,8 @@ function showRunPane() {
   sideContent.append(wrap);
 }
 function addChatMessage(role, text) {
+  state.chatMessages = state.chatMessages || [];
+  state.chatMessages.push({ role, text });
   const list = $('ai-messages');
   if (!list) return;
   const div = document.createElement('div');
@@ -266,6 +269,30 @@ function applyAIContent(path, content) {
   tab.dirty = false;
   if (state.activePath === path) renderTabs();
 }
+async function clientAiAgent(prompt, ctx, apiKey) {
+  const baseUrl = localStorage.getItem('ch.ai_base') || 'https://api.inceptionlabs.ai/v1';
+  const model = localStorage.getItem('ch.ai_model') || 'mercury-3';
+  const messages = [
+    { role: 'system', content: 'You are CodeHarbor AI coding assistant. Provide concise, accurate solutions. When editing code, output the full updated file or replacement snippets in clean markdown code blocks.' },
+  ];
+  if (ctx.activeFile && ctx.activeContent) {
+    messages.push({ role: 'user', content: `Active file: ${ctx.activeFile}\nContent:\n${ctx.activeContent.slice(0, 8000)}` });
+  }
+  messages.push({ role: 'user', content: prompt });
+
+  const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, temperature: 0.2, max_tokens: 1500 }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`AI API error (${resp.status}): ${errText.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  const reply = data.choices?.[0]?.message?.content || 'No response generated.';
+  return { report: reply };
+}
 async function chatSend(text) {
   addChatMessage('user', text);
   const active = state.activePath;
@@ -273,33 +300,64 @@ async function chatSend(text) {
   const tab = active ? state.tabs.get(active) : null;
   if (tab && tab.model) {
     activeContent = tab.model.getValue();
-    const sel = state.editor.getSelection();
+    const sel = state.editor ? state.editor.getSelection() : null;
     if (sel && !sel.isEmpty()) selectionText = tab.model.getValueInRange(sel);
-    const pos = state.editor.getPosition();
+    const pos = state.editor ? state.editor.getPosition() : null;
     if (pos) cursorLine = pos.lineNumber;
   }
   let files = [];
   try { const data = await api('/api/files?path=.'); files = data.entries.map((e) => e.path); } catch {}
   let problems = [];
-  try { problems = state.monaco.editor.getModelMarkers({}).map((m) => ({ line: m.startLineNumber, col: m.startColumn, message: m.message })); } catch {}
+  try {
+    if (state.monaco?.editor) {
+      problems = state.monaco.editor.getModelMarkers({}).map((m) => ({ line: m.startLineNumber, col: m.startColumn, message: m.message }));
+    }
+  } catch {}
   const term = $('terminal-output');
   const terminalTail = term ? term.innerText.slice(-2000) : '';
+
+  const list = $('ai-messages');
+  const typingDiv = document.createElement('div');
+  typingDiv.className = 'ai-message assistant typing';
+  typingDiv.textContent = 'Thinking…';
+  if (list) { list.append(typingDiv); list.scrollTop = list.scrollHeight; }
+
   try {
-    const result = await api('/api/ai/agent', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: text, context: { activeFile: active, activeContent, selection: selectionText, cursorLine, files, problems, terminalTail } }),
-    });
-    const touched = [...new Set([...(result.applied || []), ...(result.created || []), ...(result.deleted || [])])];
-    for (const tp of touched) {
-      if (tp === active && state.tabs.has(tp)) {
-        try { const d = await api('/api/file?path=' + encodeURIComponent(tp)); applyAIContent(tp, d.content); } catch {}
+    let result = null;
+    try {
+      result = await api('/api/ai/agent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal: text, context: { activeFile: active, activeContent, selection: selectionText, cursorLine, files, problems, terminalTail } }),
+      });
+    } catch (apiErr) {
+      const customKey = localStorage.getItem('ch.ai_key');
+      if (customKey) {
+        result = await clientAiAgent(text, { activeFile: active, activeContent, selection: selectionText, cursorLine }, customKey);
+      } else {
+        throw new Error(apiErr.message.includes('404')
+          ? 'Live website mode: Click "Set API Key" above to enable AI on this live site.'
+          : apiErr.message);
       }
     }
-    if (touched.length) await refreshFiles();
-    const fresh = result.created || [];
-    if (fresh.length && !active) { try { await openFile(fresh[0]); } catch {} }
-    addChatMessage('assistant', result.report || 'Done.');
-  } catch (error) { addChatMessage('system', error.message); }
+
+    typingDiv.remove();
+
+    if (result) {
+      const touched = [...new Set([...(result.applied || []), ...(result.created || []), ...(result.deleted || [])])];
+      for (const tp of touched) {
+        if (tp === active && state.tabs.has(tp)) {
+          try { const d = await api('/api/file?path=' + encodeURIComponent(tp)); applyAIContent(tp, d.content); } catch {}
+        }
+      }
+      if (touched.length) await refreshFiles();
+      const fresh = result.created || [];
+      if (fresh.length && !active) { try { await openFile(fresh[0]); } catch {} }
+      addChatMessage('assistant', result.report || result.content || 'Done.');
+    }
+  } catch (error) {
+    typingDiv.remove();
+    addChatMessage('system', error.message);
+  }
 }
 function showAiPane() {
   sideContent.replaceChildren();
@@ -307,21 +365,114 @@ function showAiPane() {
   wrap.className = 'ai-pane';
   const status = document.createElement('div');
   status.className = 'ai-status';
-  api('/api/ai/status').then((s) => { status.textContent = s.configured ? `AI ready · ${s.model}` : 'AI not configured'; })
-    .catch(() => { status.textContent = 'AI status unavailable'; });
-  const list = document.createElement('div'); list.className = 'ai-messages'; list.id = 'ai-messages';
-  const row = document.createElement('div'); row.className = 'ai-input-row';
-  const input = document.createElement('input'); input.id = 'ai-input'; input.placeholder = 'Ask about your code…'; input.autocomplete = 'off';
-  const sendBtn = document.createElement('button'); sendBtn.className = 'primary'; sendBtn.textContent = 'Send';
-  const fixBtn = document.createElement('button'); fixBtn.className = 'run-btn primary'; fixBtn.textContent = 'Fix Active File';
-  fixBtn.addEventListener('click', () => { const f = state.activePath; if (!f) { notify('Open a file first.'); return; } chatSend('Fix the active file: ' + f); });
-  const explainBtn = document.createElement('button'); explainBtn.className = 'run-btn'; explainBtn.textContent = 'Explain last error';
-  const doSend = () => { const v = input.value.trim(); if (!v) return; input.value = ''; chatSend(v); };
+
+  const keyBox = document.createElement('div');
+  keyBox.className = 'ai-key-box hidden';
+  keyBox.innerHTML = `
+    <label>Inception / OpenAI API Key:</label>
+    <input type="password" id="ai-custom-key" placeholder="Paste your API key…" autocomplete="off">
+    <div class="ai-key-actions">
+      <button type="button" id="ai-key-cancel">Cancel</button>
+      <button type="button" class="primary" id="ai-key-save">Save</button>
+    </div>
+  `;
+
+  const renderStatus = () => {
+    const customKey = localStorage.getItem('ch.ai_key') || '';
+    if (customKey) {
+      status.innerHTML = `<span style="color:#72c690">● AI ready · custom key</span><button id="ai-cfg-btn" style="background:none;border:0;color:#858585;cursor:pointer;font-size:11px;text-decoration:underline;">⚙ Key</button>`;
+      status.querySelector('#ai-cfg-btn')?.addEventListener('click', () => {
+        keyBox.classList.toggle('hidden');
+        if (!keyBox.classList.contains('hidden')) keyBox.querySelector('input')?.focus();
+      });
+      return;
+    }
+    api('/api/ai/status')
+      .then((s) => {
+        if (s.configured) {
+          status.innerHTML = `<span style="color:#72c690">● AI ready · ${escapeText(s.model)}</span><button id="ai-cfg-btn" style="background:none;border:0;color:#858585;cursor:pointer;font-size:11px;text-decoration:underline;">⚙ Key</button>`;
+        } else {
+          status.innerHTML = `<span style="color:#e2c08d">⚠ AI unconfigured</span><button id="ai-cfg-btn" style="background:#0e639c;border:0;color:#fff;cursor:pointer;font-size:10px;padding:2px 7px;border-radius:3px;">Set API Key</button>`;
+        }
+        status.querySelector('#ai-cfg-btn')?.addEventListener('click', () => {
+          keyBox.classList.toggle('hidden');
+          if (!keyBox.classList.contains('hidden')) keyBox.querySelector('input')?.focus();
+        });
+      })
+      .catch(() => {
+        status.innerHTML = `<span style="color:#e2c08d">⚠ Live web mode</span><button id="ai-cfg-btn" style="background:#0e639c;border:0;color:#fff;cursor:pointer;font-size:10px;padding:2px 7px;border-radius:3px;">Set API Key</button>`;
+        status.querySelector('#ai-cfg-btn')?.addEventListener('click', () => {
+          keyBox.classList.toggle('hidden');
+          if (!keyBox.classList.contains('hidden')) keyBox.querySelector('input')?.focus();
+        });
+      });
+  };
+  renderStatus();
+
+  keyBox.querySelector('#ai-key-cancel')?.addEventListener('click', () => keyBox.classList.add('hidden'));
+  keyBox.querySelector('#ai-key-save')?.addEventListener('click', () => {
+    const val = (keyBox.querySelector('#ai-custom-key')?.value || '').trim();
+    if (val) {
+      localStorage.setItem('ch.ai_key', val);
+      notify('API key saved.');
+    } else {
+      localStorage.removeItem('ch.ai_key');
+      notify('API key removed.');
+    }
+    keyBox.classList.add('hidden');
+    renderStatus();
+  });
+
+  const list = document.createElement('div');
+  list.className = 'ai-messages';
+  list.id = 'ai-messages';
+
+  state.chatMessages = state.chatMessages || [];
+  if (state.chatMessages.length) {
+    for (const m of state.chatMessages) {
+      const div = document.createElement('div');
+      div.className = 'ai-message ' + m.role;
+      div.textContent = m.text;
+      list.append(div);
+    }
+  } else {
+    const welcome = document.createElement('div');
+    welcome.className = 'ai-message assistant';
+    welcome.innerHTML = 'Hi! I am your CodeHarbor AI assistant.<br><small style="color:#888">Ask me to write code, explain errors, or fix your active file.</small>';
+    list.append(welcome);
+  }
+
+  const row = document.createElement('div');
+  row.className = 'ai-input-row';
+  const input = document.createElement('input');
+  input.id = 'ai-input';
+  input.placeholder = 'Ask about your code…';
+  input.autocomplete = 'off';
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'primary';
+  sendBtn.textContent = 'Send';
+  const fixBtn = document.createElement('button');
+  fixBtn.className = 'run-btn primary';
+  fixBtn.textContent = 'Fix Active File';
+  fixBtn.addEventListener('click', () => {
+    const f = state.activePath;
+    if (!f) { notify('Open a file first.'); return; }
+    chatSend('Fix the active file: ' + f);
+  });
+  const explainBtn = document.createElement('button');
+  explainBtn.className = 'run-btn';
+  explainBtn.textContent = 'Explain last error';
+  const doSend = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    input.value = '';
+    chatSend(v);
+  };
   sendBtn.addEventListener('click', doSend);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
   explainBtn.addEventListener('click', explainLastError);
   row.append(input, sendBtn);
-  wrap.append(status, list, row, fixBtn, explainBtn);
+  wrap.append(status, keyBox, list, row, fixBtn, explainBtn);
   mountAiPane(wrap);
 }
 async function showSourcePane() {
@@ -487,26 +638,22 @@ async function setView(view) {
   document.querySelectorAll('.activity').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
   $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', run: 'Run and Debug', extensions: 'Extensions', ai: 'AI Assistant', settings: 'Settings' })[view] || 'Explorer';
   $('explorer-actions').classList.toggle('hidden', view !== 'explorer');
-  if (view === 'search') showSearchPane();
-  else if (view === 'explorer') renderTree();
-  else {
-    sideContent.replaceChildren();
-    const message = document.createElement('div'); message.className = 'empty-tree';
-    if (view === 'source') {
-      try {
-        showSourcePane(); return;
-        if (!git.repository) message.textContent = 'No Git repository found in this workspace.';
-        else message.textContent = `${git.branch || 'Detached HEAD'} · ${git.changes} changed file${git.changes === 1 ? '' : 's'}`;
-      } catch (error) { message.textContent = error.message; }
-    } else if (view === 'run') { showRunPane(); }
-    else if (view === 'ai') { showAiPane(); }
-    else if (view === 'extensions') {
-      message.innerHTML = 'Full extension marketplace is available in the built-in IDE.<br><button class="run-btn primary" id="open-full-ide">Open Full IDE (code-server)</button>';
-      const btn = message.querySelector('#open-full-ide');
-      if (btn) btn.addEventListener('click', () => { window.open('/ide/', '_blank'); });
-    } else message.textContent = ({ settings: 'Editor settings are stored in the browser for this prototype.' })[view] || '';
-    sideContent.append(message);
+  if (view === 'search') { showSearchPane(); return; }
+  if (view === 'explorer') { renderTree(); return; }
+  if (view === 'source') { showSourcePane(); return; }
+  if (view === 'run') { showRunPane(); return; }
+  if (view === 'ai') { showAiPane(); return; }
+
+  sideContent.replaceChildren();
+  const message = document.createElement('div'); message.className = 'empty-tree';
+  if (view === 'extensions') {
+    message.innerHTML = 'Full extension marketplace is available in the built-in IDE.<br><button class="run-btn primary" id="open-full-ide">Open Full IDE (code-server)</button>';
+    const btn = message.querySelector('#open-full-ide');
+    if (btn) btn.addEventListener('click', () => { window.open('/ide/', '_blank'); });
+  } else {
+    message.textContent = ({ settings: 'Editor settings are stored in the browser for this prototype.' })[view] || '';
   }
+  sideContent.append(message);
 }
 async function runCommand(command) {
   const output = $('terminal-output'); output.insertAdjacentHTML('beforeend', `<br><span style="color:#72c690">PS workspace &gt; ${escapeText(command)}</span><br>`); output.scrollTop = output.scrollHeight;
@@ -597,13 +744,15 @@ async function sendTerminalCommand(command) {
 }
 function toggleTerminal(force) { const panel = $('bottom-panel'); const shouldOpen = force ?? panel.classList.contains('hidden'); panel.classList.toggle('hidden', !shouldOpen); if (shouldOpen) $('terminal-command').focus(); }
 function mountAiPane(wrap) {
+  if (!state.layout) state.layout = { ai: 'left', dockW: 340, bottomH: 180 };
   const dock = $('ai-dock');
   if (state.layout.ai === 'right') {
-    $('ai-dock-body').replaceChildren(wrap);
-    dock.classList.remove('hidden');
+    const dockBody = $('ai-dock-body');
+    if (dockBody) dockBody.replaceChildren(wrap);
+    if (dock) dock.classList.remove('hidden');
   } else {
-    dock.classList.add('hidden');
-    sideContent.append(wrap);
+    if (dock) dock.classList.add('hidden');
+    sideContent.replaceChildren(wrap);
   }
 }
 function persistLayout() {
@@ -615,10 +764,11 @@ function loadLayout() {
   state.layout = d;
 }
 function applyLayoutVars() {
+  if (!state.layout) state.layout = { ai: 'left', dockW: 340, bottomH: 180 };
   const area = document.querySelector('.editor-area');
   if (!area) return;
-  area.style.setProperty('--dock-w', state.layout.dockW + 'px');
-  area.style.setProperty('--bottom-h', state.layout.bottomH + 'px');
+  area.style.setProperty('--dock-w', (state.layout.dockW || 340) + 'px');
+  area.style.setProperty('--bottom-h', (state.layout.bottomH || 180) + 'px');
   const dock = $('ai-dock');
   if (dock) dock.classList.toggle('hidden', state.layout.ai !== 'right');
 }
@@ -932,30 +1082,49 @@ function setupHtmlAutoClose(monaco) {
   });
 }
 function initMonaco() {
+  if (typeof window.require !== 'function') {
+    console.warn('Monaco require() is not available; retrying in 200ms...');
+    setTimeout(initMonaco, 200);
+    return;
+  }
+  const isCdn = Boolean(window.__MONACO_CDN_ACTIVE__) || (!window.location.origin.includes('127.0.0.1') && !window.location.origin.includes('localhost'));
+  const vsPath = isCdn ? 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs' : '/monaco/vs';
+
   window.MonacoEnvironment = {
     getWorkerUrl: function (_moduleId, label) {
-      if (label === 'json') return '/monaco/vs/language/json/json.worker.js';
-      if (label === 'css' || label === 'scss' || label === 'less') return '/monaco/vs/language/css/css.worker.js';
-      if (label === 'html' || label === 'handlebars' || label === 'razor') return '/monaco/vs/language/html/html.worker.js';
-      if (label === 'typescript' || label === 'javascript') return '/monaco/vs/language/typescript/ts.worker.js';
-      return '/monaco/vs/editor/editor.worker.js';
+      if (!isCdn) {
+        if (label === 'json') return '/monaco/vs/language/json/json.worker.js';
+        if (label === 'css' || label === 'scss' || label === 'less') return '/monaco/vs/language/css/css.worker.js';
+        if (label === 'html' || label === 'handlebars' || label === 'razor') return '/monaco/vs/language/html/html.worker.js';
+        if (label === 'typescript' || label === 'javascript') return '/monaco/vs/language/typescript/ts.worker.js';
+        return '/monaco/vs/editor/editor.worker.js';
+      }
+      return 'data:text/javascript;charset=utf-8,';
     },
   };
-  window.require.config({ paths: { vs: '/monaco/vs' } });
-  window.require(['vs/editor/editor.main'], (monaco) => {
-    state.monaco = monaco;
-    state.editor = monaco.editor.create($('editor'), { value: '', language: 'plaintext', theme: 'vs-dark', automaticLayout: true, minimap: { enabled: true }, fontFamily: 'Consolas, "Cascadia Code", monospace', fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'off', tabCompletion: 'on' });
-    state.editor.onDidChangeCursorPosition(updateCursorStatus);
-    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveActive);
-    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, openQuickOpen);
-    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, () => toggleTerminal());
-    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG, () => state.editor.trigger('menu', 'editor.action.gotoLine'));
-    state.editor.addCommand(monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.next'));
-    state.editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.prev'));
-    state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, runProject);
-    registerHtmlSnippets(monaco);
-    setupHtmlAutoClose(monaco);
-  }, (error) => notify(`Editor failed to load: ${error.message || error}`));
+  try {
+    window.require.config({ paths: { vs: vsPath } });
+    window.require(['vs/editor/editor.main'], (monaco) => {
+      state.monaco = monaco;
+      state.editor = monaco.editor.create($('editor'), {
+        value: '', language: 'plaintext', theme: 'vs-dark', automaticLayout: true,
+        minimap: { enabled: true }, fontFamily: 'Consolas, "Cascadia Code", monospace',
+        fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, tabSize: 2, wordWrap: 'off', tabCompletion: 'on',
+      });
+      state.editor.onDidChangeCursorPosition(updateCursorStatus);
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveActive);
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, openQuickOpen);
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, () => toggleTerminal());
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyG, () => state.editor.trigger('menu', 'editor.action.gotoLine'));
+      state.editor.addCommand(monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.next'));
+      state.editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F8, () => state.editor.trigger('menu', 'editor.action.marker.prev'));
+      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, runProject);
+      registerHtmlSnippets(monaco);
+      setupHtmlAutoClose(monaco);
+    }, (error) => notify(`Editor failed to load: ${error.message || error}`));
+  } catch (err) {
+    console.warn('initMonaco error:', err);
+  }
 }
 
 document.querySelectorAll('.activity').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));

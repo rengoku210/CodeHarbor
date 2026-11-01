@@ -98,6 +98,14 @@
   </dialog>
 
   <script src="/monaco/vs/loader.js"></script>
+  <script>
+    if (typeof window.require !== 'function') {
+      window.__MONACO_CDN_ACTIVE__ = true;
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"><\/script>');
+    } else {
+      window.__MONACO_CDN_ACTIVE__ = false;
+    }
+  </script>
   <script src="/app.js"></script>
 </body>
 </html>

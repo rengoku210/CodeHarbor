@@ -58,6 +58,10 @@ let csProcess = null;
 
 function startCodeServer() {
   return new Promise((resolve, reject) => {
+    if (!fs.existsSync(CS_BIN)) {
+      console.warn(`code-server binary not found at ${CS_BIN}. Skipping code-server.`);
+      return resolve();
+    }
     const args = [
       CS_ENTRY,
       '--config', CONFIG,
@@ -145,6 +149,7 @@ function injectBranding() {
 // product.json overrides for branding and marketplace
 function patchProduct() {
   const productPath = path.join(CS_DIR, 'lib', 'vscode', 'product.json');
+  if (!fs.existsSync(productPath)) return;
   let product = {};
   try { product = JSON.parse(fs.readFileSync(productPath, 'utf8')); } catch {}
 
