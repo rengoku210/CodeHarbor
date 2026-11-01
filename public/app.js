@@ -63,6 +63,12 @@ async function appendEntries(container, parent, entries) {
     row.className = `tree-row ${entry.type}${state.selectedPath === entry.path ? ' selected' : ''}`;
     row.style.paddingLeft = `${14 + parent.split('/').filter(Boolean).length * 14}px`;
     row.dataset.path = entry.path;
+    row.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      state.selectedPath = entry.path;
+      if (entry.type !== 'folder') renderTree();
+      showCtxMenu(event.clientX, event.clientY, explorerMenuFor(entry));
+    });
     row.innerHTML = `${entry.type === 'folder' ? `<span class="chevron">${state.expanded.has(entry.path) ? '⌄' : '›'}</span>` : '<span class="chevron"></span>'}<span class="tree-icon">${escapeText(iconFor(entry))}</span><span class="tree-name">${escapeText(entry.name)}</span>`;
     row.addEventListener('click', async (event) => {
       event.stopPropagation();
@@ -98,6 +104,10 @@ function renderTabs() {
     tab.className = `tab${state.activePath === filePath ? ' active' : ''}`;
     tab.title = filePath;
     tab.innerHTML = `<span class="tree-icon">${escapeText(iconFor({ type: 'file', path: filePath }))}</span><span class="tab-name">${escapeText(tabLabel(filePath))}</span>${tabState.dirty ? '<span class="dirty-dot">●</span>' : ''}<button class="tab-close" title="Close">×</button>`;
+    tab.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      showCtxMenu(event.clientX, event.clientY, tabMenuFor(filePath));
+    });
     tab.addEventListener('click', (event) => { if (event.target.closest('.tab-close')) { event.stopPropagation(); closeTab(filePath); } else activateTab(filePath); });
     $('tabs').append(tab);
   }
@@ -233,6 +243,153 @@ function showMenu(name, button) {
   const menu = $('menu-popover'); menu.innerHTML = (actions[name] || []).map(([label], index) => `<button data-action="${index}">${escapeText(label)}</button>`).join(''); menu.style.left = `${button.getBoundingClientRect().left}px`; menu.classList.remove('hidden');
   menu.querySelectorAll('button').forEach((item, index) => item.addEventListener('click', () => { menu.classList.add('hidden'); actions[name][index][1](); }));
 }
+let ctxMenuEl = null;
+function closeCtxMenu() {
+  if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
+}
+function showCtxMenu(x, y, items) {
+  closeCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.setAttribute('role', 'menu');
+  for (const item of items) {
+    if (item.sep) {
+      const s = document.createElement('div');
+      s.className = 'ctx-sep';
+      menu.append(s);
+      continue;
+    }
+    const b = document.createElement('button');
+    b.className = 'ctx-item' + (item.danger ? ' danger' : '');
+    b.textContent = item.label;
+    b.setAttribute('role', 'menuitem');
+    b.addEventListener('click', () => { closeCtxMenu(); item.action(); });
+    menu.append(b);
+  }
+  document.body.append(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+  ctxMenuEl = menu;
+}
+function explorerMenuFor(entry) {
+  const items = [];
+  if (entry.path === '') {
+    items.push({ label: 'New File…', action: () => openCreate('file') });
+    items.push({ label: 'New Folder…', action: () => openCreate('folder') });
+    items.push({ sep: true });
+    items.push({ label: 'Refresh', action: refreshFiles });
+    items.push({ label: 'Collapse All', action: () => { state.expanded = new Set(['']); renderTree(); } });
+  } else if (entry.type === 'folder') {
+    items.push({ label: 'New File…', action: () => { state.selectedPath = entry.path; openCreate('file'); } });
+    items.push({ label: 'New Folder…', action: () => { state.selectedPath = entry.path; openCreate('folder'); } });
+    items.push({ sep: true });
+    items.push({ label: 'Rename…', action: () => startInlineRename(entry) });
+    items.push({ label: 'Delete', danger: true, action: () => deleteEntry(entry) });
+    items.push({ sep: true });
+    items.push({ label: 'Copy Path', action: () => copyPath(entry.path) });
+    items.push({ label: 'Refresh', action: refreshFiles });
+  } else {
+    items.push({ label: 'Open', action: () => openFile(entry.path) });
+    items.push({ sep: true });
+    items.push({ label: 'Rename…', action: () => startInlineRename(entry) });
+    items.push({ label: 'Delete', danger: true, action: () => deleteEntry(entry) });
+    items.push({ sep: true });
+    items.push({ label: 'Copy Path', action: () => copyPath(entry.path) });
+  }
+  return items;
+}
+async function deleteEntry(entry) {
+  const label = entry.type === 'folder' ? 'folder' : 'file';
+  if (!confirm(`Delete ${label} "${entry.name}"?`)) return;
+  try {
+    await api(`/api/file?path=${encodeURIComponent(entry.path)}`, { method: 'DELETE' });
+    for (const p of [...state.tabs.keys()]) {
+      if (p === entry.path || p.startsWith(entry.path + '/')) closeTab(p);
+    }
+    state.directoryCache.clear();
+    state.selectedPath = '';
+    await renderTree();
+    showStatus(`${label[0].toUpperCase()}${label.slice(1)} deleted`);
+  } catch (error) { notify(error.message); }
+}
+function copyPath(filePath) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(filePath).then(() => showStatus('Path copied'), () => {});
+  }
+}
+function tabMenuFor(filePath) {
+  const items = [];
+  items.push({ label: 'Save', action: () => { state.activePath = filePath; activateTab(filePath); saveActive(); } });
+  items.push({ sep: true });
+  items.push({ label: 'Close', action: () => closeTab(filePath) });
+  items.push({ label: 'Close Others', action: () => { for (const p of [...state.tabs.keys()]) if (p !== filePath) closeTab(p); } });
+  items.push({ label: 'Close All', action: () => { for (const p of [...state.tabs.keys()]) closeTab(p); } });
+  items.push({ sep: true });
+  items.push({ label: 'Copy Path', action: () => copyPath(filePath) });
+  return items;
+}
+async function startInlineRename(entry) {
+  const parent = document.querySelector(`.tree-row[data-path="${CSS.escape(entry.path)}"]`);
+  if (!parent) return;
+  const nameEl = parent.querySelector('.tree-name');
+  if (!nameEl) return;
+  const input = document.createElement('input');
+  input.className = 'rename-input';
+  input.value = entry.name;
+  input.setAttribute('aria-label', 'Rename');
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (commit) => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (commit && value && value !== entry.name) {
+      try {
+        const result = await api('/api/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: entry.path, newName: value }),
+        });
+        const newPath = result.path;
+        for (const p of [...state.tabs.keys()]) {
+          if (p === entry.path) {
+            const wasActive = state.activePath === p;
+            const model = state.models.get(p);
+            const content = model ? model.getValue() : '';
+            if (model) { model.dispose(); state.models.delete(p); }
+            state.tabs.delete(p);
+            const newModel = state.monaco.editor.createModel(content, languageFor(newPath), state.monaco.Uri.parse(`file:///${newPath}`));
+            state.models.set(newPath, newModel);
+            state.tabs.set(newPath, { dirty: false, model: newModel });
+            if (wasActive) activateTab(newPath);
+          } else if (p.startsWith(entry.path + '/')) {
+            closeTab(p);
+          }
+        }
+        state.directoryCache.clear();
+        state.selectedPath = '';
+        await renderTree();
+        showStatus('Renamed to ' + newPath.split('/').pop());
+      } catch (error) {
+        notify(error.message);
+        await renderTree();
+      }
+    } else {
+      await renderTree();
+    }
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+    else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+document.addEventListener('click', (event) => { if (ctxMenuEl && !ctxMenuEl.contains(event.target)) closeCtxMenu(); });
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeCtxMenu(); });
+window.addEventListener('blur', closeCtxMenu);
 function initMonaco() {
   window.MonacoEnvironment = {
     getWorkerUrl: function (_moduleId, label) {
