@@ -1,6 +1,7 @@
 # CodeHarbor
 
 A complete browser-based coding environment with a real editor, terminal, preview, and an AI assistant that edits your files for you.
+<img width="1600" height="814" alt="{9F4A910D-77D7-4357-9B42-D7CD684C16E3}" src="https://github.com/user-attachments/assets/5f22ed0c-175a-499d-a471-1d978c50e8cf" />
 
 [Live Website](https://codeharbor-theta.vercel.app/) · [GitHub Repository](https://github.com/rengoku210/CodeHarbor)
 
@@ -37,6 +38,8 @@ CodeHarbor is a browser IDE built to feel like a desktop development tool. You c
 11. Extensions: Open the built-in code-server IDE (`/ide`) for the full VS Code-compatible experience with Open VSX marketplace extensions.
 
 12. Workspace controls: Ctrl + mouse wheel zooms the whole UI (75–150%), Ctrl+0 resets. The AI panel can be docked left or right and resized.
+
+<img width="1600" height="813" alt="{C07ED1BA-39BE-4D6B-9695-9870D1BAE38A}" src="https://github.com/user-attachments/assets/ec5bc783-d50e-4835-9a9b-30c2fc66cff7" />
 
 # How to Use
 Use It Online
