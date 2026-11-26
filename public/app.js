@@ -974,10 +974,33 @@ function renderQuickOpen(files, dialog, input, results) {
 async function openQuickOpen() {
   try {
     const files = [];
-    async function walk(directory = '') { for (const entry of await listDirectory(directory)) { if (entry.type === 'folder') await walk(entry.path); else files.push(entry); } }
-    await walk(); const dialog = $('quick-open-dialog'); const input = $('quick-open-input'); const results = $('quick-open-results'); input.value = '';
+    const seen = new Set();
+    async function walk(directory = '') {
+      let entries;
+      try {
+        entries = await listDirectory(directory);
+      } catch {
+        entries = state.directoryCache.get(directory) || [];
+      }
+      for (const entry of entries) {
+        if (entry.type === 'folder') await walk(entry.path);
+        else if (!seen.has(entry.path)) { seen.add(entry.path); files.push(entry); }
+      }
+    }
+    await walk();
+    for (const p of state.tabs.keys()) {
+      if (!p.startsWith('diff:') && !seen.has(p)) {
+        seen.add(p);
+        files.push({ name: tabLabel(p), path: p, type: 'file' });
+      }
+    }
+    const dialog = $('quick-open-dialog'); const input = $('quick-open-input'); const results = $('quick-open-results'); input.value = '';
+    if (!dialog.dataset.bound) {
+      dialog.dataset.bound = '1';
+      dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+    }
     renderQuickOpen(files, dialog, input, results);
-    input.oninput = update; update(); dialog.showModal(); input.focus();
+    dialog.showModal(); input.focus();
   } catch (error) { notify(error.message); }
 }
 const ANSI_RE = /\x1B\[[0-9;?]*[ -/]*[@-~]/g;
@@ -1135,13 +1158,23 @@ function initDocking() {
   }
   $('ai-dock-hide').addEventListener('click', () => { $('ai-dock').classList.add('hidden'); state.layout.ai = 'hidden'; persistLayout(); });
 }
+function runEditorAction(id) {
+  if (!state.editor || !state.activePath) {
+    notify('Open a file first.');
+    return;
+  }
+  state.editor.focus();
+  const act = state.editor.getAction(id);
+  if (act) act.run();
+  else state.editor.trigger('menu', id);
+}
 function showMenu(name, button) {
   const actions = {
     File: [['New File', () => openCreate('file')], ['New Folder', () => openCreate('folder')], ['Quick Open…', openQuickOpen], ['Save', saveActive]],
-    Edit: [['Undo', () => state.editor.trigger('menu', 'undo')], ['Redo', () => state.editor.trigger('menu', 'redo')], ['Find', () => state.editor.trigger('menu', 'actions.find')]],
-    Selection: [['Select All', () => state.editor.trigger('menu', 'editor.action.selectAll')], ['Expand Selection', () => state.editor.trigger('menu', 'editor.action.smartSelect.expand')], ['Shrink Selection', () => state.editor.trigger('menu', 'editor.action.smartSelect.shrink')], ['Add Cursor Above', () => state.editor.trigger('menu', 'editor.action.insertCursorAbove')], ['Add Cursor Below', () => state.editor.trigger('menu', 'editor.action.insertCursorBelow')], ['Select Line', () => state.editor.trigger('menu', 'expandLineSelection')]],
+    Edit: [['Undo', () => runEditorAction('undo')], ['Redo', () => runEditorAction('redo')], ['Find', () => runEditorAction('actions.find')]],
+    Selection: [['Select All', () => runEditorAction('editor.action.selectAll')], ['Expand Selection', () => runEditorAction('editor.action.smartSelect.expand')], ['Shrink Selection', () => runEditorAction('editor.action.smartSelect.shrink')], ['Add Cursor Above', () => runEditorAction('editor.action.insertCursorAbove')], ['Add Cursor Below', () => runEditorAction('editor.action.insertCursorBelow')], ['Select Line', () => runEditorAction('expandLineSelection')]],
     View: [['Explorer', () => setView('explorer')], ['Search', () => setView('search')], ['Toggle Terminal', toggleTerminal], ['AI Assistant (Left)', () => { state.layout.ai = 'left'; applyDock('left'); }], ['AI Assistant (Right)', () => { state.layout.ai = 'right'; applyDock('right'); }], ['Reset Layout', resetLayout], ['Zoom In', () => applyZoom(state.zoom + 5)], ['Zoom Out', () => applyZoom(state.zoom - 5)], ['Reset Zoom', () => applyZoom(100)]],
-    Go: [['Go to File…', openQuickOpen], ['Go to Line…', () => state.editor.trigger('menu', 'editor.action.gotoLine')], ['Go to Symbol…', () => state.editor.trigger('menu', 'editor.action.quickOutline')], ['Go to Definition', () => state.editor.trigger('menu', 'editor.action.revealDefinition')], ['Next Problem', () => state.editor.trigger('menu', 'editor.action.marker.next')], ['Previous Problem', () => state.editor.trigger('menu', 'editor.action.marker.prev')]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
+    Go: [['Go to File…', openQuickOpen], ['Go to Line…', () => runEditorAction('editor.action.gotoLine')], ['Go to Symbol…', () => runEditorAction('editor.action.quickOutline')], ['Go to Definition', () => runEditorAction('editor.action.revealDefinition')], ['Next Problem', () => runEditorAction('editor.action.marker.next')], ['Previous Problem', () => runEditorAction('editor.action.marker.prev')]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Terminal: [['New Terminal', () => toggleTerminal(true)], ['Run Command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Help: [['About CodeHarbor', () => notify('CodeHarbor local editor')]],
   };
