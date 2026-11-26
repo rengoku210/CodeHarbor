@@ -915,7 +915,7 @@ async function runProject() {
 async function setView(view) {
   state.activeView = view;
   document.querySelectorAll('.activity').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
-  $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', extensions: 'Extensions', ai: 'AI Assistant', settings: 'Settings' })[view] || 'Explorer';
+  $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', ai: 'AI Assistant', settings: 'Settings' })[view] || 'Explorer';
   $('explorer-actions').classList.toggle('hidden', view !== 'explorer');
   if (view === 'search') { showSearchPane(); return; }
   if (view === 'explorer') { renderTree(); return; }
@@ -924,13 +924,7 @@ async function setView(view) {
 
   sideContent.replaceChildren();
   const message = document.createElement('div'); message.className = 'empty-tree';
-  if (view === 'extensions') {
-    message.innerHTML = 'Full extension marketplace is available in the built-in IDE.<br><button class="run-btn primary" id="open-full-ide">Open Full IDE (code-server)</button>';
-    const btn = message.querySelector('#open-full-ide');
-    if (btn) btn.addEventListener('click', () => { window.open('/ide/', '_blank'); });
-  } else {
-    message.textContent = ({ settings: 'Editor settings are stored in the browser for this prototype.' })[view] || '';
-  }
+  message.textContent = ({ settings: 'Editor settings are stored in the browser for this prototype.' })[view] || '';
   sideContent.append(message);
 }
 async function runCommand(command) {
