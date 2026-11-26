@@ -1,6 +1,6 @@
 const state = {
-  files: [], expanded: new Set(['']), directoryCache: new Map(), tabs: new Map(),
-  activePath: null, selectedPath: '', createKind: 'file', activeView: 'explorer',
+  files: [], expanded: new Set(['']), directoryCache: new Map(), fileCache: new Map(), tabs: new Map(),
+  activePath: null, selectedPath: '', createKind: 'file', activeView: 'explorer', isLocal: null,
   activePanel: 'terminal', monaco: null, editor: null, models: new Map(), chatHistory: [], chatMessages: [], debugLines: [], termWs: null, termConnected: false,
   layout: { ai: 'left', dockW: 340, bottomH: 180 }, zoom: 100,
 };
@@ -30,6 +30,7 @@ async function listDirectory(folder = '') {
   return data.entries;
 }
 async function refreshFiles() {
+  state.fileCache.clear();
   try {
     const cachedDirs = [...state.directoryCache.keys()];
     await listDirectory('');
@@ -159,7 +160,7 @@ function closeTab(filePath, force = false) {
 async function saveActive() {
   if (!state.activePath) return;
   const tab = state.tabs.get(state.activePath); if (!tab || tab.readOnly) return;
-  try { await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: state.activePath, content: tab.model.getValue() }) }); tab.dirty = false; renderTabs(); showStatus('Saved'); if (state.previewPath === state.activePath) reloadPreview(); }
+  try { await api('/api/file', { method: 'PUT', body: JSON.stringify({ path: state.activePath, content: tab.model.getValue() }) }); state.fileCache.set(state.activePath, tab.model.getValue()); tab.dirty = false; renderTabs(); showStatus('Saved'); if (state.previewPath === state.activePath) reloadPreview(); }
   catch (error) { notify(error.message); }
 }
 function updateCursorStatus() { const position = state.editor.getPosition(); if (position) $('cursor-status').textContent = `Ln ${position.lineNumber}, Col ${position.column}`; }
@@ -191,17 +192,87 @@ async function createEntry(event) {
   } catch (error) { $('create-error').textContent = error.message; $('create-error').classList.remove('hidden'); }
 }
 function notify(message) { const item = document.createElement('div'); item.className = 'notice'; item.textContent = message; document.body.append(item); setTimeout(() => item.remove(), 3000); }
+async function clientSearch(query) {
+  const q = query.toLowerCase();
+  const seen = new Set();
+  const out = [];
+
+  const scan = (filePath, text) => {
+    if (!text || seen.has(filePath)) return;
+    seen.add(filePath);
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes(q)) {
+        out.push({ path: filePath, line: i + 1, preview: lines[i].trim() || text.slice(0, 80) });
+        return;
+      }
+    }
+  };
+
+  for (const [filePath, tab] of state.tabs) {
+    if (filePath.startsWith('diff:') || !tab.model) continue;
+    scan(filePath, tab.model.getValue());
+  }
+
+  const walk = async (dir = '') => {
+    let entries = state.directoryCache.get(dir);
+    if (!entries) {
+      try { entries = await listDirectory(dir); } catch { entries = []; }
+    }
+    for (const entry of entries) {
+      if (entry.type === 'folder') {
+        await walk(entry.path);
+      } else if (!seen.has(entry.path)) {
+        let text = state.fileCache.get(entry.path);
+        if (text === undefined) {
+          try {
+            const f = await api(`/api/file?path=${encodeURIComponent(entry.path)}`);
+            text = f.content ?? '';
+            state.fileCache.set(entry.path, text);
+          } catch {
+            text = '';
+          }
+        }
+        scan(entry.path, text);
+      }
+    }
+  };
+  await walk('');
+  return out;
+}
 function showSearchPane() {
   $('side-heading-title').textContent = 'Search'; $('explorer-actions').classList.add('hidden');
   sideContent.innerHTML = '<div class="search-pane"><input id="search-input" placeholder="Search in files" aria-label="Search in files"><div id="search-results"></div></div>';
   const input = $('search-input');
+  let searchSeq = 0;
   input.addEventListener('input', async () => {
-    const query = input.value.trim(); if (!query) { $('search-results').replaceChildren(); return; }
-    try {
-      const { results } = await api(`/api/search?q=${encodeURIComponent(query)}`);
-      $('search-results').innerHTML = results.length ? results.map((result) => `<div class="search-result" data-path="${escapeText(result.path)}"><strong>${escapeText(result.path)}</strong><small>${result.line}: ${escapeText(result.preview)}</small></div>`).join('') : '<div class="empty-tree">No results.</div>';
-      $('search-results').querySelectorAll('.search-result').forEach((row) => row.addEventListener('click', () => openFile(row.dataset.path)));
-    } catch (error) { notify(error.message); }
+    const seq = ++searchSeq;
+    const query = input.value.trim();
+    if (!query) { $('search-results').replaceChildren(); return; }
+    if (state.isLocal === null && state.envReady) await state.envReady;
+    let results;
+    if (state.isLocal) {
+      try {
+        results = (await api(`/api/search?q=${encodeURIComponent(query)}`)).results;
+      } catch {
+        state.isLocal = false;
+        results = await clientSearch(query);
+      }
+    } else {
+      results = await clientSearch(query);
+    }
+    if (seq !== searchSeq) return;
+    $('search-results').innerHTML = results.length
+      ? results.map((r) => `<div class="search-result" data-path="${escapeText(r.path)}" data-line="${r.line}" title="${escapeText(r.path)}:${r.line}"><strong>${escapeText(r.path)}</strong><small>${r.line}: ${escapeText(r.preview)}</small></div>`).join('')
+      : '<div class="empty-tree">No results.</div>';
+    $('search-results').querySelectorAll('.search-result').forEach((row) => row.addEventListener('click', async () => {
+      await openFile(row.dataset.path);
+      const line = Number(row.dataset.line) || 1;
+      if (state.editor && state.activePath === row.dataset.path) {
+        state.editor.revealLineInCenter(line);
+        state.editor.setPosition({ lineNumber: line, column: 1 });
+      }
+    }));
   });
   input.focus();
 }
@@ -1438,8 +1509,9 @@ refreshFiles();
 initDocking();
 initZoom();
 initTerminal();
-api('/api/git').then((git) => {
+state.envReady = api('/api/git').then((git) => {
+  state.isLocal = Boolean(git.local);
   $('git-status').innerHTML = `⑂ <span>${escapeText(git.repository ? git.branch || 'Detached HEAD' : 'No Git')}</span>`;
   $('git-status').title = git.repository ? `${git.changes} changed files` : 'No Git repository in this workspace';
-}).catch(() => {});
+}).catch(() => { state.isLocal = false; });
 $('git-status').addEventListener('click', () => setView('source'));

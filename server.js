@@ -450,14 +450,14 @@ a:hover{background:#1177bb}
     try {
       const gitDir = path.join(WORKSPACE, '.git');
       if (!fs.existsSync(gitDir)) {
-        return res.json({ repository: false, branch: null, changes: 0, entries: [] });
+        return res.json({ local: true, repository: false, branch: null, changes: 0, entries: [] });
       }
       const branchOut = runGit(['branch', '--show-current']).trim();
       let aheadBehind = '';
       try { aheadBehind = runGit(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).trim() || ''; } catch {}
       const statusOut = runGit(['status', '--porcelain=v1']);
       const entries = parsePorcelain(statusOut);
-      return res.json({ repository: true, branch: branchOut || 'Detached HEAD', changes: entries.length, entries, aheadBehind });
+      return res.json({ local: true, repository: true, branch: branchOut || 'Detached HEAD', changes: entries.length, entries, aheadBehind });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
