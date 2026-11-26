@@ -285,14 +285,24 @@ function debugAppend(text) {
     el.scrollTop = el.scrollHeight;
   }
 }
-function runActiveJsFile() {
+async function runActiveJsFile() {
   if (!state.activePath) { notify('Open a JavaScript file first.'); return; }
   if (!state.activePath.endsWith('.js')) { notify('Active file is not JavaScript.'); return; }
+  if (state.isLocal === null && state.envReady) await state.envReady;
+  if (!state.isLocal) {
+    notify("Node scripts can't execute in the browser demo — run Start-CodeHarbor.ps1 locally for Node. HTML and CSS files still preview right here.");
+    return;
+  }
   toggleTerminal(true);
   sendTerminalCommand(`node "${state.activePath}"`);
   debugAppend(`> node "${state.activePath}"`);
 }
-function explainLastError() {
+async function explainLastError() {
+  if (state.isLocal === null && state.envReady) await state.envReady;
+  if (!state.isLocal) {
+    notify('Nothing ran in the terminal here — live command runs need Start-CodeHarbor.ps1 locally.');
+    return;
+  }
   const out = $('terminal-output');
   const text = (out ? out.innerText : '').slice(-1500);
   if (!text.trim()) { notify('No terminal output to analyze.'); return; }
@@ -756,6 +766,13 @@ function showAiPane() {
 }
 async function showSourcePane() {
   sideContent.replaceChildren();
+  if (state.isLocal === null && state.envReady) await state.envReady;
+  if (!state.isLocal) {
+    const box = document.createElement('div'); box.className = 'empty-tree';
+    box.textContent = "Git lives on your machine, not in the hosted sandbox. Run Start-CodeHarbor.ps1 locally if you want to stage changes, check diffs, and commit.";
+    sideContent.append(box);
+    return;
+  }
   let git;
   try { git = await api('/api/git'); } catch (e) { notify(e.message); return; }
   if (!git.repository) {
@@ -894,18 +911,26 @@ async function runProject() {
     return;
   }
   if (ext === 'js' || ext === 'mjs' || ext === 'cjs') {
-    try {
-      const pkg = await api('/api/file?path=package.json');
-      const scripts = JSON.parse(pkg.content).scripts || {};
-      for (const name of ['dev', 'start', 'serve']) {
-        if (scripts[name]) {
-          toggleTerminal(true);
-          sendTerminalCommand('npm run ' + name);
-          showStatus('Started "npm run ' + name + '" in terminal');
-          return;
+    if (state.isLocal === null && state.envReady) await state.envReady;
+    if (!state.isLocal) {
+      notify("Node scripts can't execute in the browser demo — run Start-CodeHarbor.ps1 locally for Node. HTML and CSS files still preview right here.");
+      return;
+    }
+    const hasPkg = (state.directoryCache.get('') || []).some((e) => e.name === 'package.json');
+    if (hasPkg) {
+      try {
+        const pkg = await api('/api/file?path=package.json');
+        const scripts = JSON.parse(pkg.content).scripts || {};
+        for (const name of ['dev', 'start', 'serve']) {
+          if (scripts[name]) {
+            toggleTerminal(true);
+            sendTerminalCommand('npm run ' + name);
+            showStatus('Started "npm run ' + name + '" in terminal');
+            return;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
     toggleTerminal(true);
     sendTerminalCommand('node "' + active + '"');
     showStatus('Running ' + active + ' via node');
@@ -1009,7 +1034,18 @@ function terminalAppend(text) {
   output.insertAdjacentText('beforeend', text.replace(ANSI_RE, ''));
   output.scrollTop = output.scrollHeight;
 }
-function initTerminal() {
+async function initTerminal() {
+  if (state.isLocal === null && state.envReady) await state.envReady;
+  const note = $('terminal-hosted-note');
+  if (!state.isLocal) {
+    if (note) note.classList.remove('hidden');
+    const out = $('terminal-output');
+    if (out) out.textContent = '';
+    const cmd = $('terminal-command');
+    if (cmd) cmd.placeholder = 'Run Start-CodeHarbor.ps1 locally for live PowerShell';
+    return;
+  }
+  if (note) note.classList.add('hidden');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   try { state.termWs = new WebSocket(`${proto}://${location.host}/api/terminal`); } catch { return; }
   state.termWs.onopen = () => {
@@ -1031,6 +1067,11 @@ function initTerminal() {
   state.termWs.onerror = () => {};
 }
 async function sendTerminalCommand(command) {
+  if (state.isLocal === null && state.envReady) await state.envReady;
+  if (!state.isLocal) {
+    terminalAppend(`\r\nPS workspace> ${command}\r\nCan't run "${command}" from the hosted demo — fire up Start-CodeHarbor.ps1 locally for PowerShell.\r\n`);
+    return;
+  }
   if (state.termConnected && state.termWs && state.termWs.readyState === 1) {
     terminalAppend(`\r\nPS workspace> ${command}\r\n`);
     state.termWs.send(JSON.stringify({ type: 'input', data: command + '\r\n' }));
@@ -1176,7 +1217,7 @@ function showMenu(name, button) {
     View: [['Explorer', () => setView('explorer')], ['Search', () => setView('search')], ['Toggle Terminal', toggleTerminal], ['AI Assistant (Left)', () => { state.layout.ai = 'left'; applyDock('left'); }], ['AI Assistant (Right)', () => { state.layout.ai = 'right'; applyDock('right'); }], ['Reset Layout', resetLayout], ['Zoom In', () => applyZoom(state.zoom + 5)], ['Zoom Out', () => applyZoom(state.zoom - 5)], ['Reset Zoom', () => applyZoom(100)]],
     Go: [['Go to File…', openQuickOpen], ['Go to Line…', () => runEditorAction('editor.action.gotoLine')], ['Go to Symbol…', () => runEditorAction('editor.action.quickOutline')], ['Go to Definition', () => runEditorAction('editor.action.revealDefinition')], ['Next Problem', () => runEditorAction('editor.action.marker.next')], ['Previous Problem', () => runEditorAction('editor.action.marker.prev')]], Run: [['Run Active JS File', runActiveJsFile], ['Run PowerShell command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
     Terminal: [['New Terminal', () => toggleTerminal(true)], ['Run Command…', () => { toggleTerminal(true); $('terminal-command').focus(); }]],
-    Help: [['About CodeHarbor', () => notify('CodeHarbor local editor')]],
+    Help: [['About CodeHarbor', () => notify(state.isLocal ? 'CodeHarbor local editor' : 'CodeHarbor web demo — run Start-CodeHarbor.ps1 locally for PowerShell, Node, and Git')]],
   };
   const menu = $('menu-popover'); menu.innerHTML = (actions[name] || []).map(([label], index) => `<button data-action="${index}">${escapeText(label)}</button>`).join(''); menu.style.left = `${button.getBoundingClientRect().left}px`; menu.classList.remove('hidden');
   menu.querySelectorAll('button').forEach((item, index) => item.addEventListener('click', () => { menu.classList.add('hidden'); actions[name][index][1](); }));
@@ -1519,10 +1560,19 @@ initMonaco();
 refreshFiles();
 initDocking();
 initZoom();
-initTerminal();
 state.envReady = api('/api/git').then((git) => {
   state.isLocal = Boolean(git.local);
+  if (!state.isLocal) {
+    $('git-status').innerHTML = '⑂ <span>Git (local)</span>';
+    $('git-status').title = 'Git works when you run Start-CodeHarbor.ps1 locally';
+    return;
+  }
   $('git-status').innerHTML = `⑂ <span>${escapeText(git.repository ? git.branch || 'Detached HEAD' : 'No Git')}</span>`;
   $('git-status').title = git.repository ? `${git.changes} changed files` : 'No Git repository in this workspace';
-}).catch(() => { state.isLocal = false; });
+}).catch(() => {
+  state.isLocal = false;
+  $('git-status').innerHTML = '⑂ <span>Git (local)</span>';
+  $('git-status').title = 'Git works when you run Start-CodeHarbor.ps1 locally';
+});
+initTerminal();
 $('git-status').addEventListener('click', () => setView('source'));

@@ -383,7 +383,7 @@ app.delete('/api/file', (req, res) => {
 });
 
 app.get('/api/git', (req, res) => {
-  res.json({ repository: true, branch: 'main', changes: 0, entries: [] });
+  res.json({ local: false, repository: false, branch: null, changes: 0, entries: [] });
 });
 
 // Preview route

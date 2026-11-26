@@ -30,3 +30,4 @@
 .confirm-message{margin:0;color:#bbb;font-size:13px;line-height:1.5;word-break:break-word}
 .dialog-actions .danger-btn{background:#a1260d;border-color:#c53b1e;color:#fff}
 .dialog-actions .danger-btn:hover{background:#c53b1e}
+.hosted-note{padding:4px 8px;margin-bottom:6px;background:#1e242a;border-left:2px solid #e2c08d;color:#d7ba7d;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
