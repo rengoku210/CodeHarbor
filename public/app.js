@@ -43,8 +43,8 @@ async function refreshFiles() {
   } catch (error) { notify(error.message); }
 }
 async function renderTree() {
-  sideContent.replaceChildren();
   if (state.activeView !== 'explorer') return;
+  sideContent.replaceChildren();
   const root = document.createElement('div');
   root.className = 'tree-root';
   root.title = 'workspace';
@@ -325,6 +325,7 @@ function applyAIContent(path, content) {
   tab.model.setValue(content);
   tab.dirty = false;
   if (state.activePath === path) renderTabs();
+  showStatus('Updated by AI');
 }
 function extractCodeFiles(text, activeFile, userGoal = '') {
   const files = [];
