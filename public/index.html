@@ -10,12 +10,12 @@
 <body>
   <div class="app-shell">
     <header class="titlebar">
-      <div class="brand-mark" aria-label="CodeHarbor">CH</div>
+      <div class="brand-mark" aria-label="CodeHarbor" title="CodeHarbor">CH</div>
       <nav class="menus" aria-label="Application menu">
-        <button data-menu="File">File</button><button data-menu="Edit">Edit</button><button data-menu="Selection">Selection</button><button data-menu="View">View</button><button data-menu="Go">Go</button><button data-menu="Run">Run</button><button data-menu="Terminal">Terminal</button><button data-menu="Help">Help</button>
+        <button data-menu="File" title="File menu">File</button><button data-menu="Edit" title="Edit menu">Edit</button><button data-menu="Selection" title="Selection menu">Selection</button><button data-menu="View" title="View menu">View</button><button data-menu="Go" title="Go menu">Go</button><button data-menu="Run" title="Run menu">Run</button><button data-menu="Terminal" title="Terminal menu">Terminal</button><button data-menu="Help" title="Help menu">Help</button>
       </nav>
       <div class="title-center"><span class="tiny-dot"></span><span>CodeHarbor</span><span class="title-separator">—</span><span id="active-title">No file open</span></div>
-      <div class="title-actions"><button id="run-button" class="run-green" title="Run / Preview (Ctrl+Enter)">▶ Run</button><button id="toggle-terminal" title="Toggle terminal (Ctrl+J)">▁</button><button id="toggle-sidebar" title="Toggle Explorer (Ctrl+B)">◫</button></div>
+      <div class="title-actions"><button id="run-button" class="run-green" title="Run or Preview (Ctrl+Enter)">▶ Run</button><button id="toggle-terminal" title="Toggle Terminal (Ctrl+J)">▁</button><button id="toggle-sidebar" title="Toggle Explorer Sidebar">◫</button></div>
     </header>
 
     <div id="menu-popover" class="menu-popover hidden"></div>
@@ -33,7 +33,7 @@
       </aside>
 
       <aside class="side-panel" id="side-panel">
-        <div class="side-heading"><span id="side-heading-title">Explorer</span><div id="explorer-actions" class="explorer-actions"><button id="new-file" title="New File">＋</button><button id="new-folder" title="New Folder">▱＋</button><button id="refresh-files" title="Refresh Explorer">⟳</button><button id="collapse-all" title="Collapse All">▣</button></div></div>
+        <div class="side-heading"><span id="side-heading-title">Explorer</span><div id="explorer-actions" class="explorer-actions"><button id="new-file" title="New File">＋</button><button id="new-folder" title="New Folder">▱＋</button><button id="refresh-files" title="Refresh Explorer">⟳</button><button id="collapse-all" title="Collapse Folders in Explorer">▣</button></div></div>
         <div class="panel-content" id="side-content"></div>
       </aside>
 
@@ -44,7 +44,7 @@
           <div id="editor" class="monaco-host hidden"></div>
           <div id="welcome" class="welcome">
             <div class="welcome-logo">CH</div><h1>CodeHarbor</h1><p>Your workspace is ready.</p>
-            <div class="welcome-actions"><button class="primary" id="welcome-new-file">Create a file</button><button id="welcome-open-folder">Open workspace folder</button></div>
+            <div class="welcome-actions"><button class="primary" id="welcome-new-file" title="Create a new file">Create a file</button><button id="welcome-open-folder" title="Open Explorer">Open workspace folder</button></div>
             <div class="welcome-shortcuts"><span><kbd>Ctrl</kbd> <kbd>S</kbd> Save</span><span><kbd>Ctrl</kbd> <kbd>P</kbd> Quick open</span><span><kbd>Ctrl</kbd> <kbd>J</kbd> Terminal</span></div>
           </div>
           <div class="minimap-decoration" aria-hidden="true"></div>
@@ -73,14 +73,14 @@
         <div id="sash-right" class="sash sash-v" title="Drag to resize"></div>
         <div id="sash-bottom" class="sash sash-h" title="Drag to resize"></div>
         <div class="panel" id="bottom-panel">
-          <div class="panel-tabs"><button class="panel-tab active" data-panel="terminal">TERMINAL</button><button class="panel-tab" data-panel="problems">PROBLEMS</button><button class="panel-tab" data-panel="output">OUTPUT</button><button class="panel-tab" data-panel="debug">DEBUG CONSOLE</button><button id="close-panel" class="panel-close" title="Close panel">×</button></div>
-          <div id="terminal-view" class="terminal-view"><div class="terminal-label">PowerShell <span>· workspace</span></div><div id="terminal-output" class="terminal-output">CodeHarbor local command runner<br>Commands run in the workspace folder.</div><form id="terminal-form" class="terminal-form"><span>PS <b>workspace</b> &gt;</span><input id="terminal-command" autocomplete="off" spellcheck="false" aria-label="PowerShell command" placeholder="Type a command and press Enter"><button type="submit" aria-label="Run command">↵</button></form></div>
+          <div class="panel-tabs"><button class="panel-tab active" data-panel="terminal" title="Terminal">TERMINAL</button><button class="panel-tab" data-panel="problems" title="Problems">PROBLEMS</button><button class="panel-tab" data-panel="output" title="Output">OUTPUT</button><button class="panel-tab" data-panel="debug" title="Debug Console">DEBUG CONSOLE</button><button id="close-panel" class="panel-close" title="Close Panel">×</button></div>
+          <div id="terminal-view" class="terminal-view"><div class="terminal-label">PowerShell <span>· workspace</span></div><div id="terminal-output" class="terminal-output">CodeHarbor local command runner<br>Commands run in the workspace folder.</div><form id="terminal-form" class="terminal-form"><span>PS <b>workspace</b> &gt;</span><input id="terminal-command" autocomplete="off" spellcheck="false" aria-label="PowerShell command" placeholder="Type a command and press Enter"><button type="submit" aria-label="Run command" title="Run Command">↵</button></form></div>
           <div id="panel-empty" class="panel-empty hidden"></div>
         </div>
       </section>
     </main>
 
-    <footer class="statusbar"><div class="status-left"><button id="status-workspace">⌂ <span>workspace</span></button><button id="git-status">⑂ <span>No Git</span></button><span id="save-status">Ready</span></div><div class="status-right"><span id="cursor-status">Ln 1, Col 1</span><span id="zoom-status">100%</span><span>Spaces: 2</span><span>UTF-8</span><span>CRLF</span><span id="language-status">Plain Text</span><button id="status-terminal">◫ Terminal</button></div></footer>
+    <footer class="statusbar"><div class="status-left"><button id="status-workspace" title="Workspace folder">⌂ <span>workspace</span></button><button id="git-status" title="Source Control">⑂ <span>No Git</span></button><span id="save-status">Ready</span></div><div class="status-right"><span id="cursor-status">Ln 1, Col 1</span><span id="zoom-status">100%</span><span>Spaces: 2</span><span>UTF-8</span><span>CRLF</span><span id="language-status">Plain Text</span><button id="status-terminal" title="Toggle Terminal (Ctrl+J)">◫ Terminal</button></div></footer>
   </div>
 
   <dialog id="create-dialog" class="create-dialog">

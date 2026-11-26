@@ -46,6 +46,7 @@ async function renderTree() {
   if (state.activeView !== 'explorer') return;
   const root = document.createElement('div');
   root.className = 'tree-root';
+  root.title = 'workspace';
   root.innerHTML = `<span class="chevron">${state.expanded.has('') ? '⌄' : '›'}</span><span>workspace</span>`;
   root.addEventListener('click', async () => {
     if (state.expanded.has('')) state.expanded.delete('');
@@ -71,6 +72,7 @@ async function appendEntries(container, parent, entries) {
     row.className = `tree-row ${entry.type}${state.selectedPath === entry.path ? ' selected' : ''}`;
     row.style.paddingLeft = `${14 + parent.split('/').filter(Boolean).length * 14}px`;
     row.dataset.path = entry.path;
+    row.title = entry.path;
     row.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       state.selectedPath = entry.path;
@@ -598,7 +600,7 @@ function showAiPane() {
   const renderStatus = () => {
     const customKey = localStorage.getItem('ch.ai_key') || '';
     if (customKey) {
-      status.innerHTML = `<span style="color:#72c690">● AI ready · custom key</span><button id="ai-cfg-btn" style="background:none;border:0;color:#858585;cursor:pointer;font-size:11px;text-decoration:underline;">⚙ Key</button>`;
+      status.innerHTML = `<span style="color:#72c690">● AI ready · custom key</span><button id="ai-cfg-btn" title="Configure API key" style="background:none;border:0;color:#858585;cursor:pointer;font-size:11px;text-decoration:underline;">⚙ Key</button>`;
       status.querySelector('#ai-cfg-btn')?.addEventListener('click', () => {
         keyBox.classList.toggle('hidden');
         if (!keyBox.classList.contains('hidden')) keyBox.querySelector('input')?.focus();
@@ -608,9 +610,9 @@ function showAiPane() {
     api('/api/ai/status')
       .then((s) => {
         if (s.configured) {
-          status.innerHTML = `<span style="color:#72c690">● AI ready · ${escapeText(s.model)}</span><button id="ai-cfg-btn" style="background:none;border:0;color:#858585;cursor:pointer;font-size:11px;text-decoration:underline;">⚙ Key</button>`;
+          status.innerHTML = `<span style="color:#72c690">● AI ready · ${escapeText(s.model)}</span><button id="ai-cfg-btn" title="Configure API key" style="background:none;border:0;color:#858585;cursor:pointer;font-size:11px;text-decoration:underline;">⚙ Key</button>`;
         } else {
-          status.innerHTML = `<span style="color:#e2c08d">⚠ AI unconfigured</span><button id="ai-cfg-btn" style="background:#0e639c;border:0;color:#fff;cursor:pointer;font-size:10px;padding:2px 7px;border-radius:3px;">Set API Key</button>`;
+          status.innerHTML = `<span style="color:#e2c08d">⚠ AI unconfigured</span><button id="ai-cfg-btn" title="Configure API key" style="background:#0e639c;border:0;color:#fff;cursor:pointer;font-size:10px;padding:2px 7px;border-radius:3px;">Set API Key</button>`;
         }
         status.querySelector('#ai-cfg-btn')?.addEventListener('click', () => {
           keyBox.classList.toggle('hidden');
@@ -618,7 +620,7 @@ function showAiPane() {
         });
       })
       .catch(() => {
-        status.innerHTML = `<span style="color:#e2c08d">⚠ Live web mode</span><button id="ai-cfg-btn" style="background:#0e639c;border:0;color:#fff;cursor:pointer;font-size:10px;padding:2px 7px;border-radius:3px;">Set API Key</button>`;
+        status.innerHTML = `<span style="color:#e2c08d">⚠ Live web mode</span><button id="ai-cfg-btn" title="Configure API key" style="background:#0e639c;border:0;color:#fff;cursor:pointer;font-size:10px;padding:2px 7px;border-radius:3px;">Set API Key</button>`;
         status.querySelector('#ai-cfg-btn')?.addEventListener('click', () => {
           keyBox.classList.toggle('hidden');
           if (!keyBox.classList.contains('hidden')) keyBox.querySelector('input')?.focus();
@@ -669,9 +671,11 @@ function showAiPane() {
   const sendBtn = document.createElement('button');
   sendBtn.className = 'primary';
   sendBtn.textContent = 'Send';
+  sendBtn.title = 'Send message';
   const fixBtn = document.createElement('button');
   fixBtn.className = 'run-btn primary';
   fixBtn.textContent = 'Fix Active File';
+  fixBtn.title = 'Ask AI to fix the active file';
   fixBtn.addEventListener('click', () => {
     const f = state.activePath;
     if (!f) { notify('Open a file first.'); return; }
@@ -680,6 +684,7 @@ function showAiPane() {
   const explainBtn = document.createElement('button');
   explainBtn.className = 'run-btn';
   explainBtn.textContent = 'Explain last error';
+  explainBtn.title = 'Explain the latest terminal error';
   const doSend = () => {
     const v = input.value.trim();
     if (!v) return;
@@ -720,6 +725,7 @@ async function showSourcePane() {
     const nm = document.createElement('span'); nm.className = 'source-name'; nm.textContent = entry.path; nm.title = entry.path;
     const act = document.createElement('button'); act.className = 'run-btn';
     act.textContent = entry.staged ? 'Unstage' : 'Stage';
+    act.title = entry.staged ? 'Unstage file' : 'Stage file';
     act.addEventListener('click', async (e) => {
       e.stopPropagation();
       try {
@@ -743,7 +749,7 @@ async function showSourcePane() {
   const allLabel = document.createElement('label'); allLabel.className = 'source-all';
   const allCb = document.createElement('input'); allCb.type = 'checkbox'; allCb.id = 'commit-all';
   allLabel.append(allCb, document.createTextNode(' Commit all changes'));
-  const commitBtn = document.createElement('button'); commitBtn.className = 'run-btn primary'; commitBtn.textContent = 'Commit';
+  const commitBtn = document.createElement('button'); commitBtn.className = 'run-btn primary'; commitBtn.textContent = 'Commit'; commitBtn.title = 'Commit staged changes';
   commitBtn.addEventListener('click', async () => {
     const message = msgInput.value.trim();
     if (!message) { notify('Enter a commit message.'); return; }
