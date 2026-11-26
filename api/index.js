@@ -337,6 +337,29 @@ app.post('/api/create', (req, res) => {
   }
 });
 
+app.post('/api/rename', (req, res) => {
+  try {
+    const { path: oldPath, newName } = req.body || {};
+    if (!oldPath || !newName || typeof newName !== 'string') {
+      return res.status(400).json({ error: 'Path and new name are required.' });
+    }
+    const safeNew = newName.trim();
+    if (!safeNew || safeNew === '.' || safeNew === '..' || /[<>:"|?*]/.test(safeNew) || safeNew.includes('/') || safeNew.includes('\\')) {
+      return res.status(400).json({ error: 'Invalid name.' });
+    }
+    const src = resolveWorkspacePath(oldPath);
+    if (src === WORKSPACE) return res.status(400).json({ error: 'Cannot rename workspace root.' });
+    if (!fs.existsSync(src)) return res.status(404).json({ error: 'Not found.' });
+    const dest = path.join(path.dirname(src), safeNew);
+    if (dest === src) return res.json({ ok: true, path: toWorkspaceRelative(src) });
+    if (fs.existsSync(dest)) return res.status(400).json({ error: 'Already exists.' });
+    fs.renameSync(src, dest);
+    return res.json({ ok: true, path: toWorkspaceRelative(dest) });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
 app.delete('/api/file', (req, res) => {
   try {
     const target = resolveWorkspacePath(req.query.path || '');

@@ -81,6 +81,7 @@ async function appendEntries(container, parent, entries) {
     row.innerHTML = `${entry.type === 'folder' ? `<span class="chevron">${state.expanded.has(entry.path) ? '⌄' : '›'}</span>` : '<span class="chevron"></span>'}<span class="tree-icon">${escapeText(iconFor(entry))}</span><span class="tree-name">${escapeText(entry.name)}</span>`;
     row.addEventListener('click', async (event) => {
       event.stopPropagation();
+      if (row.querySelector('.rename-input')) return;
       state.selectedPath = entry.path;
       if (entry.type === 'folder') {
         if (state.expanded.has(entry.path)) state.expanded.delete(entry.path);
@@ -1206,21 +1207,37 @@ async function startInlineRename(entry) {
         for (const p of [...state.tabs.keys()]) {
           if (p === entry.path) {
             const wasActive = state.activePath === p;
+            const oldTab = state.tabs.get(p);
+            const wasDirty = Boolean(oldTab && oldTab.dirty);
             const model = state.models.get(p);
             const content = model ? model.getValue() : '';
             if (model) { model.dispose(); state.models.delete(p); }
             state.tabs.delete(p);
             const newModel = state.monaco.editor.createModel(content, languageFor(newPath), state.monaco.Uri.parse(`file:///${newPath}`));
             state.models.set(newPath, newModel);
-            state.tabs.set(newPath, { dirty: false, model: newModel });
+            state.tabs.set(newPath, { dirty: wasDirty, model: newModel });
+            newModel.onDidChangeContent(() => {
+              const t = state.tabs.get(newPath);
+              if (t) { t.dirty = true; renderTabs(); showStatus('Unsaved changes', 0); }
+            });
             if (wasActive) activateTab(newPath);
+            else renderTabs();
           } else if (p.startsWith(entry.path + '/')) {
             closeTab(p);
           }
         }
-        state.directoryCache.clear();
-        state.selectedPath = '';
-        await renderTree();
+        if (entry.type === 'folder') {
+          const nextExpanded = new Set();
+          for (const exp of state.expanded) {
+            if (exp === entry.path) nextExpanded.add(newPath);
+            else if (exp.startsWith(entry.path + '/')) nextExpanded.add(newPath + exp.slice(entry.path.length));
+            else nextExpanded.add(exp);
+          }
+          state.expanded = nextExpanded;
+        }
+        state.directoryCache.delete(entry.path);
+        if (state.selectedPath === entry.path) state.selectedPath = newPath;
+        await refreshFiles();
         showStatus('Renamed to ' + newPath.split('/').pop());
       } catch (error) {
         notify(error.message);
@@ -1230,11 +1247,14 @@ async function startInlineRename(entry) {
       await renderTree();
     }
   };
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('dblclick', (e) => e.stopPropagation());
+  input.addEventListener('contextmenu', (e) => e.stopPropagation());
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') { event.preventDefault(); finish(true); }
     else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
   });
-  input.addEventListener('blur', () => finish(true));
+  input.onblur = () => finish(true);
 }
 document.addEventListener('click', (event) => { if (ctxMenuEl && !ctxMenuEl.contains(event.target)) closeCtxMenu(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeCtxMenu(); });
