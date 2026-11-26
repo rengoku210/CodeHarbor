@@ -10,9 +10,20 @@ const WORKSPACE = process.env.VERCEL
   ? path.join('/tmp', 'workspace')
   : path.join(__dirname, '..', 'workspace');
 
+let seeded = false;
+const SEED_FLAG = process.env.VERCEL ? path.join('/tmp', '.ch-seeded') : '';
+
 function initWorkspace() {
   try {
+    const isFresh = !fs.existsSync(WORKSPACE);
     fs.mkdirSync(WORKSPACE, { recursive: true });
+    if (seeded || (SEED_FLAG && fs.existsSync(SEED_FLAG))) {
+      seeded = true;
+      return;
+    }
+    seeded = true;
+    if (SEED_FLAG) fs.writeFileSync(SEED_FLAG, '1', 'utf8');
+    if (!isFresh && fs.readdirSync(WORKSPACE).length > 0) return;
     const indexPath = path.join(WORKSPACE, 'index.html');
     if (!fs.existsSync(indexPath)) {
       fs.writeFileSync(indexPath, '<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="utf-8">\n  <title>Hello CodeHarbor</title>\n  <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n  <h1>Welcome to CodeHarbor</h1>\n  <p>Start editing this file or use the AI assistant to help you write code!</p>\n</body>\n</html>\n', 'utf8');

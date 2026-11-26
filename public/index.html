@@ -93,6 +93,14 @@
     </form>
   </dialog>
 
+  <dialog id="confirm-dialog" class="create-dialog confirm-dialog">
+    <form method="dialog">
+      <div class="dialog-title" id="confirm-title">Delete</div>
+      <p id="confirm-message" class="confirm-message"></p>
+      <div class="dialog-actions"><button type="button" id="cancel-confirm">Cancel</button><button class="danger-btn" type="submit" id="accept-confirm" value="ok">Delete</button></div>
+    </form>
+  </dialog>
+
   <dialog id="quick-open-dialog" class="create-dialog quick-open-dialog">
     <form id="quick-open-form" method="dialog"><input id="quick-open-input" placeholder="Search files by name" autocomplete="off"><div id="quick-open-results"></div></form>
   </dialog>

@@ -60,8 +60,7 @@ async function renderTree() {
   if (!(state.directoryCache.get('') || []).length) {
     const empty = document.createElement('div');
     empty.className = 'empty-tree';
-    empty.innerHTML = 'This folder is empty.<br><button data-create="file">Create a file</button> or <button data-create="folder">create a folder</button> to get started.';
-    empty.querySelectorAll('[data-create]').forEach((button) => button.addEventListener('click', () => openCreate(button.dataset.create)));
+    empty.textContent = 'No files in workspace. Click + to create one.';
     children.append(empty);
   }
   sideContent.append(children);
@@ -143,10 +142,10 @@ function activateTab(filePath) {
   $('language-status').textContent = languageFor(filePath);
   renderTabs(); updateCursorStatus();
 }
-function closeTab(filePath) {
+function closeTab(filePath, force = false) {
   const tab = state.tabs.get(filePath);
   if (!tab) return;
-  if (tab.dirty && !confirm(`Discard unsaved changes to ${tabLabel(filePath)}?`)) return;
+  if (!force && tab.dirty && !confirm(`Discard unsaved changes to ${tabLabel(filePath)}?`)) return;
   tab.model.dispose(); state.tabs.delete(filePath); state.models.delete(filePath);
   if (state.activePath === filePath) {
     const next = [...state.tabs.keys()].at(-1); state.activePath = null;
@@ -1150,13 +1149,54 @@ function explorerMenuFor(entry) {
   }
   return items;
 }
+function askConfirm(title, message, confirmLabel = 'Delete') {
+  const dlg = $('confirm-dialog');
+  if (!dlg) return Promise.resolve(false);
+  $('confirm-title').textContent = title;
+  $('confirm-message').textContent = message;
+  const okBtn = $('accept-confirm');
+  okBtn.textContent = confirmLabel;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      dlg.removeEventListener('close', onClose);
+      $('cancel-confirm').removeEventListener('click', onCancel);
+      dlg.removeEventListener('click', onBackdrop);
+      if (dlg.open) dlg.close();
+      resolve(val);
+    };
+    const onClose = () => finish(dlg.returnValue === 'ok');
+    const onCancel = () => finish(false);
+    const onBackdrop = (e) => { if (e.target === dlg) finish(false); };
+    dlg.returnValue = '';
+    dlg.addEventListener('close', onClose);
+    $('cancel-confirm').addEventListener('click', onCancel);
+    dlg.addEventListener('click', onBackdrop);
+    dlg.showModal();
+    okBtn.focus();
+  });
+}
 async function deleteEntry(entry) {
   const label = entry.type === 'folder' ? 'folder' : 'file';
-  if (!confirm(`Delete ${label} "${entry.name}"?`)) return;
+  const ok = await askConfirm(
+    `Delete ${label === 'folder' ? 'Folder' : 'File'}`,
+    `Delete ${label} "${entry.name}"?`,
+  );
+  if (!ok) return;
   try {
     await api(`/api/file?path=${encodeURIComponent(entry.path)}`, { method: 'DELETE' });
     for (const p of [...state.tabs.keys()]) {
-      if (p === entry.path || p.startsWith(entry.path + '/')) closeTab(p);
+      if (p === entry.path || p.startsWith(entry.path + '/')) closeTab(p, true);
+    }
+    if (entry.type === 'folder') {
+      for (const exp of [...state.expanded]) {
+        if (exp === entry.path || exp.startsWith(entry.path + '/')) state.expanded.delete(exp);
+      }
+      for (const dir of [...state.directoryCache.keys()]) {
+        if (dir === entry.path || dir.startsWith(entry.path + '/')) state.directoryCache.delete(dir);
+      }
     }
     state.selectedPath = '';
     await refreshFiles();
