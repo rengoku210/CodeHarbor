@@ -308,22 +308,6 @@ async function askAiExplain(errorText) {
     addChatMessage('assistant', result.content);
   } catch (error) { addChatMessage('system', error.message); }
 }
-function showRunPane() {
-  sideContent.replaceChildren();
-  const wrap = document.createElement('div');
-  wrap.className = 'run-pane';
-  const hint = document.createElement('div');
-  hint.className = 'empty-tree';
-  hint.textContent = 'Commands run in the integrated terminal. Output is mirrored to the DEBUG CONSOLE panel below.';
-  const b1 = document.createElement('button'); b1.className = 'run-btn primary'; b1.textContent = 'Run Active JS File';
-  b1.addEventListener('click', runActiveJsFile);
-  const b2 = document.createElement('button'); b2.className = 'run-btn'; b2.textContent = 'Run PowerShell Command…';
-  b2.addEventListener('click', () => { toggleTerminal(true); $('terminal-command').focus(); });
-  const b3 = document.createElement('button'); b3.className = 'run-btn'; b3.textContent = 'Explain Last Error';
-  b3.addEventListener('click', explainLastError);
-  wrap.append(hint, b1, b2, b3);
-  sideContent.append(wrap);
-}
 function addChatMessage(role, text) {
   state.chatMessages = state.chatMessages || [];
   state.chatMessages.push({ role, text });
@@ -931,12 +915,11 @@ async function runProject() {
 async function setView(view) {
   state.activeView = view;
   document.querySelectorAll('.activity').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
-  $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', run: 'Run and Debug', extensions: 'Extensions', ai: 'AI Assistant', settings: 'Settings' })[view] || 'Explorer';
+  $('side-heading-title').textContent = ({ explorer: 'Explorer', search: 'Search', source: 'Source Control', extensions: 'Extensions', ai: 'AI Assistant', settings: 'Settings' })[view] || 'Explorer';
   $('explorer-actions').classList.toggle('hidden', view !== 'explorer');
   if (view === 'search') { showSearchPane(); return; }
   if (view === 'explorer') { renderTree(); return; }
   if (view === 'source') { showSourcePane(); return; }
-  if (view === 'run') { showRunPane(); return; }
   if (view === 'ai') { showAiPane(); return; }
 
   sideContent.replaceChildren();
